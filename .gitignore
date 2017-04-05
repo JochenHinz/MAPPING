@@ -3,3 +3,9 @@ plots/
 saves/
 trash/
 __pycache__/
+action_minimizer.py
+collocation_1d.py
+collocation_tester.py
+main_bijective_level.py
+motorgrid.py
+nrw.txt

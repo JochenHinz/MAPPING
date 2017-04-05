@@ -9,6 +9,8 @@ import utilities as ut
 
 ## MAKE ALL THIS STUFF ADAPTIVE TO nD
 
+########################################
+
 
 Pointset = collections.namedtuple('Pointset', ['verts', 'geom'])
 gauss = 'gauss{:d}'.format
