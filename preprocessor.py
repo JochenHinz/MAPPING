@@ -12,49 +12,38 @@ from auxilliary_classes import *
 
 def vec_union(vec1, vec2):  ## return the union of two refine indices
     return np.asarray(sorted(list(set(list(vec1) + list(vec2)))))
-
-
-class preproc_object(preproc_info):
     
-    def __init__(self,cons_lib, dirichlet_lib, cons_lib_lib, error_lib):
-        preproc_info.__init__(self)
-        self.i =  -1
+    
+class preproc_dict:
+    
+    def __init__(self, dictionary):
+        self._dict = dictionary
         
-    def extend(self, *args):
-        self.i += 1
-        assert len(*args) == len(self)
-        for i, thing in enumerate(*args):
-            self[i].update({self.i: thing})
+        
+    def instantiate(self, rep_dict):
+        ret = self._dict.copy()
+        for side in self._dict:
+            if all([not isinstance(self._dict[side], Pointset), not isinstance(self._dict[side], ut.base_grid_object)]):
+                ret[side] = ret[side](rep_dict[side])
+        return ret
+        
+    def from_geom(self,geom):
+        rep_dict = {'left': geom, 'right': geom, 'bottom': geom, 'top': geom}
+        return self.instantiate(rep_dict)
     
-    def at(self,n):
-        assert n < len(self)
-        return [self[j][n] for j in range(len(self))]
+    def items(self):
+        return self._dict.items()
             
             
 def log_iter_sorted_dict_items(title, d):
     for k, v in sorted(d.items()):
         with log.context(title + ' ' + k):
             yield k, v
-            
-            
-def std_goal_boundary_dependence(goal_boundaries_, go):
-    goal_boundaries = goal_boundaries_.copy()
-    for side in planar_sides:
-        func = goal_boundaries[side]
-        if isinstance(func, ut.tensor_grid_object):  ## take union
-            temp = func + go 
-            goal_boundaries[side] = temp
-        elif isinstance(func, function.Evaluable):  ## nutils function - do nothing
-            pass
-        else: ## lambda function
-            goal_boundaries[side] = func(go.geom)
-    return goal_boundaries
 
             
             
-def generate_cons(go, boundary_func_libray_, corners, btol = 1e-2):
-    domain, geom, basis, degree, ischeme, basis_type, knots = go.domain, go.geom, go.basis.vector(2), go.degree, go.ischeme, go.basis_type, go.knots
-    boundary_func_libray = boundary_func_libray_.copy()   
+def generate_cons(go, boundary_funcs, corners, btol = 1e-2):
+    domain, geom, basis, degree, ischeme, basis_type, knots = go.domain, go.geom, go.basis.vector(2), go.degree, go.ischeme, go.basis_type, go.knots 
     cons = None
     for (i, j), v in log.iter('corners', corners.items()):  ## constrain the corners
         domain_ = (domain.levels[-1] if isinstance(domain, topology.HierarchicalTopology) else domain).boundary[{0: 'bottom', 1: 'top'}[j]].boundary[{0: 'left', 1: 'right'}[i]]
@@ -63,7 +52,7 @@ def generate_cons(go, boundary_func_libray_, corners, btol = 1e-2):
     # the projection error is larger than `btol` in `refine_elems`.
     cons_library = {'left':0, 'right':0, 'top':0, 'bottom':0}
     #refine_elems = set()
-    for side, goal in log_iter_sorted_dict_items('boundary', boundary_func_libray):
+    for side, goal in log_iter_sorted_dict_items('boundary', boundary_funcs):
         dim = side_dict[side]
         if isinstance(goal, Pointset):
             domain_ = domain.boundary[side].locate(geom[dim], goal.verts)
@@ -83,18 +72,11 @@ def generate_cons(go, boundary_func_libray_, corners, btol = 1e-2):
     return cons
 
 
-def constrained_boundary_projection(go, goal_boundaries_, corners, btol = 1e-2, rep_functions = None, ref = 0):  #Needs some fixing
+def constrained_boundary_projection(go, goal_boundaries_, corners, btol = 1e-2, rep_dict = None, ref = 0):  #Needs some fixing
     degree, ischeme, basis_type = go.degree, go.ischeme, go.basis_type
-    goal_boundaries = goal_boundaries_.copy()
-    if rep_functions is None:  ## no reparam function: take standard dependency
-        rep_functions = {'left': go.geom, 'right': go.geom, 'bottom': go.geom, 'top':go.geom}
-    for side in planar_sides:  ## apply the reparam functions
-        if all([not isinstance(goal_boundaries[side], Pointset), not isinstance(goal_boundaries[side], ut.base_grid_object)]):
-            goal_boundaries[side] = goal_boundaries[side](rep_functions[side])
+    goal_boundaries = goal_boundaries_.from_geom(go.geom) if not rep_dict else goal_boundaries_.instantiate(rep_dict)
     if basis_type == 'bspline':  ## the basis type is b_spline = > we need to refine on knots
         assert go._knots is not None
-    if go.cons is None:
-        go.set_cons(goal_boundaries,corners)
     cons = go.cons
     refine_elems = set()
     error_dict = {'left':0, 'right':0, 'top':0, 'bottom':0}
@@ -119,7 +101,7 @@ def constrained_boundary_projection(go, goal_boundaries_, corners, btol = 1e-2, 
         else:   ## refinement necessary = > return new go with refined grid
             domain = domain.refined_by(refine_elems)
             new_go = go.update_from_domain(domain, ref_basis = True)   ## return hierarchically refined grid object
-            new_go.set_cons(goal_boundaries, corners)
+            new_go.set_cons(goal_boundaries_, corners)
             return new_go
     else:
         union_dict = {0: ['bottom', 'top'], 1: ['left', 'right']}
@@ -131,17 +113,20 @@ def constrained_boundary_projection(go, goal_boundaries_, corners, btol = 1e-2, 
             ## refine according to union
             ## create new topology
             new_go = go.ref_by(ref_indices, prolong_mapping = False, prolong_constraint = False)
-            cons_funcs = std_goal_boundary_dependence(goal_boundaries_, new_go)
-            new_go.set_cons(cons_funcs, corners)
+            #cons_funcs = goal_boundaries_.from_geom(new_go.geom) if not rep_dict else goal_boundaries_.instantiate(rep_dict)
+            new_go.set_cons(goal_boundaries_, corners)
             return new_go
 
 
 
-def boundary_projection(go, goal_boundaries, corners, btol = 1e-2, rep_functions = None):
+def boundary_projection(go, goal_boundaries, corners, btol = 1e-2, rep_dict = None):
     basis_type = go.basis_type
+    print(goal_boundaries)
+    go.set_cons(goal_boundaries,corners, rep_dict = rep_dict)
     go_list = [go]
     for bndrefine in log.count('boundary projection'):
-        proj = constrained_boundary_projection(go_list[-1], goal_boundaries, corners, btol = btol, rep_functions = rep_functions)
+        proj = constrained_boundary_projection(go_list[-1], goal_boundaries, corners, btol = btol, rep_dict = rep_dict)
+        print(proj)
         if proj is None:
             break
         else:

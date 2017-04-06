@@ -2,7 +2,7 @@ import numpy as np
 import scipy as sp
 import scipy.interpolate
 from nutils import *
-import inspect, collections, itertools, copy, functools, abc
+import inspect, collections, itertools, copy, functools, abc, pickle
 from matplotlib import pyplot
 from problem_library import Pointset
 from auxilliary_classes import *
@@ -190,7 +190,7 @@ def grid_object(name, *args, **kwargs):
 
 class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
     _s = None
-    cons = None
+    _cons = None
     _knots = None
     domain = None
     geom = None
@@ -216,8 +216,14 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         return self._s
     def sets(self, value):
         self._s = value
+        
+    def getcons(self):
+        return self._cons
+    def setcons(self, value):
+        self._cons = value
     
     s = property(gets, sets)
+    cons = property(getcons, setcons)
         
     
     
@@ -245,13 +251,14 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
                 go_._knots = go_._knots[1 if side in ['left', 'right'] else 0]
             return go_
         
-    def make_cons(self, *args, **kwargs):
+    def make_cons(self, goal_boundaries, corners, rep_dict = None, **kwargs):
         assert self.basis is not None
-        cons = prep.generate_cons(*args, **kwargs)
+        funcs = goal_boundaries.instantiate(rep_dict) if rep_dict is not None else goal_boundaries.from_geom(self.geom)
+        cons = prep.generate_cons(self, funcs, corners, **kwargs)
         return cons
     
     def set_cons(self, *args, **kwargs):
-        self.cons = self.make_cons(self, *args, **kwargs)            
+        self.cons = self.make_cons(*args, **kwargs)            
     
     
     def mapping(self):
@@ -262,9 +269,10 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         
         
     @property
-    def repeat(self):
-        assert self._s is not None
-        return len(self._s) // len(self.basis)
+    def repeat(self):  ## this one gives the ratio len(s) // len(basis), make this adaptive to nD
+        #assert self.s is not None
+        #return len(self.s) // len(self.basis)
+        return 2
         
         
     #########################################################################
@@ -429,8 +437,13 @@ class hierarchical_grid_object(base_grid_object):
 class tensor_grid_object(base_grid_object):
     
     basis_type = 'bspline'            
+    
+    @classmethod
+    def with_mapping(cls, s, cons, *args, **kwargs):
+        return cls(*args, s = s, cons = cons, **kwargs)
+        
             
-    def __init__(self, p, *args, ischeme = 6, knots = None):
+    def __init__(self, p, *args, ischeme = 6, knots = None, s = None, cons = None):
         assert knots is not None, 'Keyword-argument \'knots\' needs to be provided'
         self.degree, self.ischeme, self._knots = p, ischeme, knots
         if len(args) == 2: ## instantiation via domain, geom
@@ -446,7 +459,8 @@ class tensor_grid_object(base_grid_object):
         
         if len(self.ndims) > 2:
             raise NotImplementedError
-        
+        self._s = np.zeros(self.repeat*np.prod(self.ndims)) if s is None else s
+        self._cons = util.NanVec(len(self._s)) if cons is None else cons
         self.set_basis()
 
         
@@ -466,10 +480,10 @@ class tensor_grid_object(base_grid_object):
     def ref_by(self, args, prolong_mapping = True, prolong_constraint = True):  ## args = [ref_index_1, ref_index2]
         assert len(args) == len(self.knots)
         new_knots = self._knots.ref_by(args)  ## refine the knot_vectors
-        new_go = make_go(self.basis_type, self.degree, ischeme = self.ischeme, knots = new_knots) ## new grid with new kvs
-        arg = [self.s if prolong_mapping else None, self.cons if prolong_constraint else None]  ## prolong or set to None
-        new_go.s, new_go.cons = self.prolong_func(arg, new_go)
-        return new_go
+        new_go = make_go(self.basis_type, self.degree, knots = new_knots) ## dummy go for prolong
+        new_mapping = [self.s if prolong_mapping else None, self.cons if prolong_constraint else None]  ## prolong or set to None
+        new_mapping = self.prolong_func(new_mapping, new_go)
+        return tensor_grid_object.with_mapping(*new_mapping, self.degree, knots = new_knots)
     
     def prolong_func(self, funcs, new_go, method = 'T'):  ## ugly, make prettier
         assert_params = [tensor_grid_object.are_nested(self,new_go)] + [self.degree <= new_go.degree]
@@ -639,7 +653,7 @@ class tensor_grid_object_side(tensor_grid_object):
         self._parent = parent
         self._side = side
         indices_ = indices.sides(*parent.ndims, side, repeat = parent.repeat)  ## ugly, make nicer
-        self.s, self.cons = parent.s[indices_], util.NanVec(len(indices_))
+        self._s, self.cons = parent.s[indices_], util.NanVec(len(indices_))
         indices_ = indices.corners(*parent.ndims, side, repeat = parent.repeat)
         self.cons[indices_] = self.s[indices_]
         
@@ -685,6 +699,14 @@ class multigrid_object(object):
     def plot(self, name, ref = 0):
         for i in range(len(self)):
             self[i].plot(name +'_%i' %i, ref = ref)
+            
+    @staticmethod
+    def from_file(name):
+        pkl_file = open(name + '.pkl', 'rb')
+        mgo = pickle.load(pkl_file)
+        pkl_file.close()
+        return multigrid_object(mgo._gos)
+        
             
 
 def nutils_function(func, derivative = np.polynomial.polynomial.Polynomial([0])):
