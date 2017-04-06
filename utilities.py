@@ -2,7 +2,7 @@ import numpy as np
 import scipy as sp
 import scipy.interpolate
 from nutils import *
-import inspect, collections, itertools, copy
+import inspect, collections, itertools, copy, functools
 from matplotlib import pyplot
 from problem_library import Pointset
 from auxilliary_classes import *
@@ -38,7 +38,7 @@ def open_kv_multiplicities(length, degree):
     return [degree+1] + [1]*(length - 2) + [degree+1]
 
 
-    
+@functools.total_ordering
 class knot_object:  #a: beginning, b: end, n: steps  ## NEEDS FIXING, NEEDS TO BE INITIALIZED WITH KNOTS
 
     def __init__(self, *args, **kwargs):   ## either args = a,b,n or kwargs: knots = [....]
@@ -65,9 +65,6 @@ class knot_object:  #a: beginning, b: end, n: steps  ## NEEDS FIXING, NEEDS TO B
     
     def __le__(self, other):  ## see if one is subset of other
         return set(self.knots()[0]) <= set(other.knots()[0])
-    
-    def __ge__(self, other):  ## the converse of __le__
-        return other <= self
     
     
     
@@ -117,7 +114,9 @@ class nonuniform_kv(knot_object):
         assert isinstance(other, type(self))
         return tensor_kv(self,other)
     
+
     
+@functools.total_ordering  
 class tensor_kv:  ## several knot_vectors
     
     ###################################################################
@@ -173,9 +172,6 @@ class tensor_kv:  ## several knot_vectors
         else:
             ## if len(self) != 1, call __le__ len(self) times with len(item) == 1 tensor_kv's
             return all([self[i] <= other[i] for i in range(len(self))])
-        
-    def __ge__(self, other):
-        return other <= self
     
     def __mul__(self,other):
         kvs = self._kvs
