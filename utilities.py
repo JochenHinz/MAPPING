@@ -189,7 +189,7 @@ def grid_object(name, *args, **kwargs):
         
 
 class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
-    s = None
+    _s = None
     cons = None
     _knots = None
     domain = None
@@ -212,6 +212,16 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         return len(self._knots)
     
     
+    def gets(self):
+        return self._s
+    def sets(self, value):
+        self._s = value
+    
+    s = property(gets, sets)
+        
+    
+    
+    @property
     def knots(self):
         return self._knots.knots()
 
@@ -253,8 +263,8 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         
     @property
     def repeat(self):
-        assert self.s is not None
-        return len(self.s) // len(self.basis)
+        assert self._s is not None
+        return len(self._s) // len(self.basis)
         
         
     #########################################################################
@@ -326,7 +336,7 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         
     def dot(self,vec):
         assert self.basis is not None
-        l = len(vec) // len(self.basis)
+        l = self.repeat
         return (self.basis if l == 1 else self.basis.vector(l)).dot(vec)
         
         
@@ -428,7 +438,7 @@ class tensor_grid_object(base_grid_object):
             self.domain, self.geom = args
         elif len(args) == 0:  ## canonical instantiation via knots
             assert isinstance(knots, tensor_kv)
-            self.domain, self.geom = mesh.rectilinear(self.knots())
+            self.domain, self.geom = mesh.rectilinear(self.knots)
         else:
             raise ValueError('Invalid amount of arguments supplied')
             
@@ -448,13 +458,13 @@ class tensor_grid_object(base_grid_object):
         if degree is None:
             degree = self.degree
         if vector is None:
-            return self.domain.basis('bspline', degree = degree, knotvalues = self.knots())  ## make case distinction nicer
+            return self.domain.basis('bspline', degree = degree, knotvalues = self.knots)  ## make case distinction nicer
         else:
-            return self.domain.basis('bspline', degree = degree, knotvalues = self.knots()).vector(vector)
+            return self.domain.basis('bspline', degree = degree, knotvalues = self.knots).vector(vector)
         
         
     def ref_by(self, args, prolong_mapping = True, prolong_constraint = True):  ## args = [ref_index_1, ref_index2]
-        assert len(args) == len(self.knots())
+        assert len(args) == len(self.knots)
         new_knots = self._knots.ref_by(args)  ## refine the knot_vectors
         new_go = make_go(self.basis_type, self.degree, ischeme = self.ischeme, knots = new_knots) ## new grid with new kvs
         arg = [self.s if prolong_mapping else None, self.cons if prolong_constraint else None]  ## prolong or set to None
@@ -489,7 +499,7 @@ class tensor_grid_object(base_grid_object):
     
     
     def requires_dependence(*requirements, operator = all):  ## decorator to ensure that self and other satisfy certain requirements 
-        def decorator(fn):                                            
+        def decorator(fn):                                       
             def decorated(*args):                              
                 if operator([req(*args) for req in requirements]):                  
                     return fn(*args)                         
@@ -497,12 +507,13 @@ class tensor_grid_object(base_grid_object):
             return decorated                                          
         return decorator
     
-    #####################################################
+    ###################################################################################
     
     ## for use in requires_dependence(...)
     
     sameclass = lambda x,y:  type(x) == type(y)
     subclass = lambda x,y: issubclass(type(y), type(x))
+    superclass = lambda x,y: issubclass(type(x), type(y))
     
     
     ###################################################################################
@@ -573,7 +584,7 @@ class tensor_grid_object(base_grid_object):
     
     
     
-    ## go[side], go_[otherisde] operations
+    ## go[side], go_[otherisde] operations ## move this to subclass
     
     
     
@@ -599,7 +610,7 @@ class tensor_grid_object(base_grid_object):
     def are_nested(leader,follower):  ## returns True when the the go's are nested else false
         return any([leader <= follower, follower <= leader])
     
-    
+    @requires_dependence(subclass, superclass, operator = any)
     def __le__(self,other):
         if len(self.ndims) != len(other.ndims):
             return False
