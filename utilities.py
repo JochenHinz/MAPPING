@@ -2,7 +2,7 @@ import numpy as np
 import scipy as sp
 import scipy.interpolate
 from nutils import *
-import inspect, collections, itertools, copy, functools
+import inspect, collections, itertools, copy, functools, abc
 from matplotlib import pyplot
 from problem_library import Pointset
 from auxilliary_classes import *
@@ -90,7 +90,6 @@ class nonuniform_kv(knot_object):
     def ref_by(self,indices):
         if len(indices) == 0:
             return self
-        print(len(indices), np.max(indices), self.n )
         assert all([len(indices) <= self.n, np.max(indices) < self.n])  ## amount of indices is of course smaller than the amount of elements
         new_knots = self._knots
         add = (np.asarray([new_knots[i+1] for i in indices]) + np.asarray([new_knots[i] for i in indices]))/2.0
@@ -189,7 +188,7 @@ def grid_object(name, *args, **kwargs):
         raise ValueError('Unknown grid type ' + name)
         
 
-class base_grid_object(object):
+class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
     s = None
     cons = None
     _knots = None
@@ -198,21 +197,6 @@ class base_grid_object(object):
     degree = None
     sides = None
     ndims = None
-    
-    def __init__(self, grid_type_, *args, basis = None, ischeme = 6, knots = None, **kwargs):
-        self.basis, self.ischeme, self._knots = basis, ischeme, knots
-        if grid_type_ == 'spline': ## domain, geom, degree, for hierarchical
-            assert len(args) == 3
-            self.domain, self.geom, self.degree = args
-        elif grid_type_ == 'bspline': ## degree and knots for tensor grid
-            assert len(args) == 1 and self._knots is not None
-            assert isinstance(knots, tensor_kv)
-            self.degree, self.ischeme = *args, ischeme
-            self.domain, self.geom = mesh.rectilinear(self.knots())
-        else:
-            raise ValueError('Unknown grid type ' + grid_type_)
-        if not basis:  ## if the basis has not been stated specifically, we'll set it to the canonical choice of basis
-                self.set_basis()
         
     def update_from_domain(self, domain_, new_knots = None, ref_basis = False):
         go_ = copy.deepcopy(self)
@@ -264,8 +248,13 @@ class base_grid_object(object):
         if self.s is None:
             return 0
         else:
-            l = len(self.s) // len(self.basis)
-            return (self.basis if l ==1 else self.basis.vector(l)).dot(self.s)
+            return self.dot(self.s)
+        
+        
+    @property
+    def repeat(self):
+        assert self.s is not None
+        return len(self.s) // len(self.basis)
         
         
     #########################################################################
@@ -387,8 +376,12 @@ class hierarchical_grid_object(base_grid_object):
     
     basis_type = 'spline'
     
-    def __init__(self, *args, **kwargs):
-        base_grid_object.__init__(self, self.basis_type, *args, **kwargs)
+    def __init__(self, *args, basis = None, ischeme = 6, knots = None, **kwargs):
+        self.basis, self.ischeme, self._knots = basis, ischeme, knots
+        assert len(args) == 3
+        self.domain, self.geom, self.degree = args
+        if not basis:  ## if the basis has not been stated specifically, we'll set it to the canonical choice of basis
+            self.set_basis()
         
         
     def _basis(self, degree = None, vector = None):
@@ -425,14 +418,27 @@ class hierarchical_grid_object(base_grid_object):
 
 class tensor_grid_object(base_grid_object):
     
-    basis_type = 'bspline'
-    
-    def __init__(self, *args, **kwargs):
-        base_grid_object.__init__(self, self.basis_type, *args, **kwargs)
+    basis_type = 'bspline'            
+            
+    def __init__(self, p, *args, ischeme = 6, knots = None):
+        assert knots is not None, 'Keyword-argument \'knots\' needs to be provided'
+        self.degree, self.ischeme, self._knots = p, ischeme, knots
+        if len(args) == 2: ## instantiation via domain, geom
+            assert args[0].ndims == 1
+            self.domain, self.geom = args
+        elif len(args) == 0:  ## canonical instantiation via knots
+            assert isinstance(knots, tensor_kv)
+            self.domain, self.geom = mesh.rectilinear(self.knots())
+        else:
+            raise ValueError('Invalid amount of arguments supplied')
+            
         self.ndims = [len(k.knots()[0]) + self.degree - 1 for k in self._knots]
-        self.sides = planar_sides
+        
         if len(self.ndims) > 2:
             raise NotImplementedError
+        
+        self.set_basis()
+
         
         
     def greville_abs(self):
@@ -451,7 +457,6 @@ class tensor_grid_object(base_grid_object):
         assert len(args) == len(self.knots())
         new_knots = self._knots.ref_by(args)  ## refine the knot_vectors
         new_go = make_go(self.basis_type, self.degree, ischeme = self.ischeme, knots = new_knots) ## new grid with new kvs
-        new_go.set_basis() 
         arg = [self.s if prolong_mapping else None, self.cons if prolong_constraint else None]  ## prolong or set to None
         new_go.s, new_go.cons = self.prolong_func(arg, new_go)
         return new_go
@@ -479,21 +484,25 @@ class tensor_grid_object(base_grid_object):
     
     def __getitem__(self,side):
         assert side in planar_sides
-        go_, dim = self.get_side(side), side_dict[side]
-        go_.ndims = [self.ndims[dim]]
-        go_.sides = dim_boundaries[dim]
-        args = go_.s, go_.cons
-        go_.set_basis()
-        if args == [None]*len(args):  ## both s and cons None, do nothing
-            pass
-        else:  ## restrict to side
-            go_.s = extract_sides(args[0], *self.ndims)[side] if args[0] is not None else None
-            go_.cons = None
-            if go_.s is not None:
-                repeat = len(go_.s) // len(go_.basis)
-                for side_ in dim_boundaries[dim]:  ## make this nicer, possibly manual
-                    go_.cons = go_.domain.boundary[side_].project(go_.mapping(), geometry = go_.geom, onto = go_.basis.vector(repeat), constrain = go_.cons, ischeme = 'vertex')
-        return go_
+        return tensor_grid_object_side.from_parent(self, side)
+    
+    
+    
+    def requires_dependence(*requirements, operator = all):  ## decorator to ensure that self and other satisfy certain requirements 
+        def decorator(fn):                                            
+            def decorated(*args):                              
+                if operator([req(*args) for req in requirements]):                  
+                    return fn(*args)                         
+                raise Exception("cannot perform requested operation with given arguments")                  
+            return decorated                                          
+        return decorator
+    
+    #####################################################
+    
+    ## for use in requires_dependence(...)
+    
+    sameclass = lambda x,y:  type(x) == type(y)
+    subclass = lambda x,y: issubclass(type(y), type(x))
     
     
     ###################################################################################
@@ -502,7 +511,7 @@ class tensor_grid_object(base_grid_object):
     
     ##  Operator overloading
     
-    
+    @requires_dependence(sameclass)
     def __add__(self, other):   ## self.cons and self.s are prolonged to unified grid
         if self >= other:  ## grids are nested
             return self
@@ -510,10 +519,11 @@ class tensor_grid_object(base_grid_object):
             return base_grid_object.grid_union(self, other)
         
     
-    def __or__(self, other):  ## self.cons is kept and other.s is prolonged to unified grid
+    @requires_dependence(sameclass)
+    def __or__(self, other):   ## self.cons is kept and other.s is prolonged to unified grid
         return base_grid_object.mg_prolongation(self, other)
     
-    
+    @requires_dependence(sameclass)
     def __sub__(self, other):  
         ## prolong / restrict everything from other to self while keeping self.domain, constrain the corners
         if not tensor_grid_object.are_nested(self,other):  ## grids are not nested => take grid union first
@@ -522,7 +532,7 @@ class tensor_grid_object(base_grid_object):
             fromgrid = other  ## grids are nested => simply take other
         return base_grid_object.grid_embedding(self, fromgrid)
             
-    
+    @requires_dependence(sameclass)
     def __mod__(self, other): 
         ## self.cons is kept and other.s is prolonged / restricted into self.grid
         if tensor_grid_object.are_nested(self,other):  ## no grid union necessary
@@ -536,9 +546,12 @@ class tensor_grid_object(base_grid_object):
             return base_grid_object.grid_embedding(self, fromgrid, prolong_cons = False)
         
         
+    
+    #######################################################################################        
+        
     ## go and go_[side] operations
     
-    
+    @requires_dependence(subclass)
     def extend(self,other):  ## exact 
         ## extend other to go[side] using a grid union in the side-direction replacing cons and s there, prolong the rest
         assert all([len(self) == 2, len(other) == 1]), 'Dimension mismatch'
@@ -546,13 +559,13 @@ class tensor_grid_object(base_grid_object):
         ## Forthcoming
         return None
         
-        
+    @requires_dependence(subclass)    
     def replace(self,other):  ## exact w.r.t. to other.side, possibly inexact w.r.t. self[oppositeside]
         ## replace self[side] by other go[oppositeside] is restricted / prolonged to kv in corresponding direction
         ## Forthcoming
         return None
     
-    
+    @requires_dependence(subclass)
     def inject(self,other):  ## possibly inexact
         ## coarsen other to self[side], keeping everythig else intact
         ## Forthcoming
@@ -598,6 +611,37 @@ class tensor_grid_object(base_grid_object):
         
     def __pow__(self, other):  ## see if grids are nested
         return tensor_grid_object.are_nested(self,other)
+    
+    
+class tensor_grid_object_side(tensor_grid_object):
+    'child class of tensor_grid_object corresponding to just one side'
+    
+    @classmethod
+    def from_parent(cls, parent, side):
+        dim = side_dict[side]
+        return cls(parent, side, parent.degree, parent.domain.boundary[side], parent.geom, ischeme = parent.ischeme, knots = parent._knots[dim])
+    
+    
+    def __init__(self, parent, side, *args, **kwargs): ## should be instantiated with one of the classmethods
+        assert side in planar_sides
+        super().__init__(*args, **kwargs)
+        self._parent = parent
+        self._side = side
+        indices_ = indices.sides(*parent.ndims, side, repeat = parent.repeat)  ## ugly, make nicer
+        self.s, self.cons = parent.s[indices_], util.NanVec(len(indices_))
+        indices_ = indices.corners(*parent.ndims, side, repeat = parent.repeat)
+        self.cons[indices_] = self.s[indices_]
+        
+        
+    @property
+    def parent(self):
+        return self._parent
+    
+    
+    @property
+    def side(self):
+        return self._side   
+        
             
 
 def make_go(grid_type, *args, **kwargs):

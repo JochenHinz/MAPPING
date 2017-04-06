@@ -1,4 +1,4 @@
-import collections
+import collections, functools
 import numpy as np
 from nutils import *
 from scipy.linalg import block_diag
@@ -20,12 +20,43 @@ planar_sides = ['left', 'right', 'bottom', 'top']
 side_dict = {'left':1, 'right':1, 'bottom':0, 'top':0}
 opposite_side = {'left': 'right', 'right': 'left', 'bottom': 'top', 'top': 'bottom'}
 dim_boundaries = {0: ['left', 'right'], 1: ['bottom', 'top']}
+side_indices = lambda n,m: {'bottom': [i*m for i in range(n)], 'top': [i*m + m - 1 for i in range(n)], 'left': list(range(m)), 'right': list(range((n - 1)*m, n*m))}
+corners = lambda n,m: {'left':[0, m-1], 'bottom':[0, n-1], 'top':[0, n-1], 'right':[0, m-1]}
+
+class indices:  ## for now only planar, make more efficient
+    'returns indices of sides and corners'
+    
+    def __init__(self,n,m, side, repeat = 1):
+        self._ndims, self._repeat, self._dim = [n, m], repeat, side_dict[side]
+        self._side_indices = side_indices(n,m)[side]
+        self._corners = corners(n,m)[side]
+        
+    def rep(self,target,l):
+        if l == 1:
+            return target
+        else:
+            for i in range(1,self._repeat):  ## make less nested
+                target += [j + i*l for j in target]
+            return target
+    
+    @staticmethod
+    def sides(*args, **kwargs):  ## n, m, side, repeat = repeat
+        temp = indices(*args, **kwargs)  ## instantiate temporary object to retrieve indices
+        return temp.rep(temp._side_indices, np.prod(temp._ndims))
+    
+    @staticmethod
+    def corners(*args, **kwargs):
+        temp = indices(*args, **kwargs)
+        return temp.rep(temp._corners, temp._ndims[temp._dim])
+    
+    
+    
 
 def side_indices(n, m, repeat = 1):  ## args = [n,m], ## soon [n,m, ...]
     ret_ = {'bottom': [i*m for i in range(n)], 'top': [i*m + m - 1 for i in range(n)], 'left': list(range(m)), 'right': list(range((n - 1)*m, n*m))}
     l = n*m
     ret = ret_.copy()
-    for i in range(1,repeat):
+    for i in range(1,repeat):  ## make less nested
         for key in planar_sides:
             ret[key] += [j + i*l for j in ret_[key]]
     return ret
@@ -33,9 +64,9 @@ def side_indices(n, m, repeat = 1):  ## args = [n,m], ## soon [n,m, ...]
         
         
 
-def corner_indices(ndims):  ## 2D => 0D
+def corner_indices(ndims, repeat = 1):  ## 2D => 0D
     if len(ndims) == 1:
-        return {0: 0, 1: ndims[0] - 1}
+        return {0: [0], 1: [ndims[0] - 1]}
     elif len(ndims) == 2:
         n,m = ndims
         return {(0,0): 0,  (1,0): m - 1, (0,1): (n-1)*m, (1,1): n*m - 1}
