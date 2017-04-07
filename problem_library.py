@@ -11,6 +11,12 @@ import xml.etree.ElementTree as ET
 
 pathdir = os.path.dirname(os.path.realpath(__file__))
 
+
+###################################################
+
+## Tidy up ! Use as much from utilities as possible
+
+
 def arr(thing):
     return np.asarray(thing)
 

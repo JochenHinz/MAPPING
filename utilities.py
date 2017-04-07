@@ -187,6 +187,30 @@ def grid_object(name, *args, **kwargs):
     else:
         raise ValueError('Unknown grid type ' + name)
         
+        
+class tensor_vec:
+    
+    def __init__(self, vec, ndims, repeat = 2):
+        self._vec, self._ndims = vec, ndims
+        self._side_indices = {'left':0, 'right':0, 'bottom':0, 'top':0}
+        for i in range(len(planar_sides)):
+            side = planar_sides[i]
+            self._side_indices[side] = indices.sides(*ndims, side, repeat = repeat)
+                                      
+    def __getitem__(self, side):
+        assert side in planar_sides
+        return self._vec[self._side_indices[side]]
+    
+    def __setitem__(self, side, vec):
+        assert side in planar_sides
+        if vec is not None:
+            self._vec[self._side_indices[side]] = vec
+        else:
+            pass
+    
+    def __len__(self):
+        return len(self._vec)
+        
 
 class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
     _s = None
@@ -211,19 +235,38 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         assert self._knots is not None
         return len(self._knots)
     
+    ##########################################################
     
+    ## Handling of s (mapping) and cons (constraints) virtual
+    
+    ## FUGLY, too repetetive, try to find better solution
+    
+    @abc.abstractmethod
     def gets(self):
-        return self._s
-    def sets(self, value):
-        self._s = value
-        
-    def getcons(self):
-        return self._cons
-    def setcons(self, value):
-        self._cons = value
+        pass
     
-    s = property(gets, sets)
-    cons = property(getcons, setcons)
+    @abc.abstractmethod
+    def sets(self, value):
+        pass
+        
+    @abc.abstractmethod
+    def getcons(self):
+        pass
+    
+    @abc.abstractmethod
+    def setcons(self, value):
+        pass
+    
+    @abc.abstractmethod
+    def s(self):
+        pass
+    
+    @abc.abstractmethod
+    def cons(self):
+        pass
+    
+    
+    ##########################################################
         
     
     
@@ -240,16 +283,11 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         assert self.knots is not None
         ret = [self.knots[i].ref(ref) for i in range(len(self.knots))]
         return ret
-        
+    
+    @abc.abstractmethod        
     def get_side(self,side):
-        if not side in planar_sides:
-            raise ValueError('side-keyword is invalid')
-        else:
-            go_ = copy.deepcopy(self)
-            go_.domain, go_.side = go_.domain.boundary[side], side
-            if go_._knots:
-                go_._knots = go_._knots[1 if side in ['left', 'right'] else 0]
-            return go_
+        pass
+
         
     def make_cons(self, goal_boundaries, corners, rep_dict = None, **kwargs):
         assert self.basis is not None
@@ -441,8 +479,20 @@ class tensor_grid_object(base_grid_object):
     @classmethod
     def with_mapping(cls, s, cons, *args, **kwargs):
         return cls(*args, s = s, cons = cons, **kwargs)
-        
-            
+    
+    #######################
+    
+    ##Forthcoming
+    
+    @classmethod
+    def from_domain(cls):
+        return None
+    
+    #######################
+    
+    
+    ######################################################################################
+                    
     def __init__(self, p, *args, ischeme = 6, knots = None, s = None, cons = None):
         assert knots is not None, 'Keyword-argument \'knots\' needs to be provided'
         self.degree, self.ischeme, self._knots = p, ischeme, knots
@@ -459,10 +509,39 @@ class tensor_grid_object(base_grid_object):
         
         if len(self.ndims) > 2:
             raise NotImplementedError
-        self._s = np.zeros(self.repeat*np.prod(self.ndims)) if s is None else s
-        self._cons = util.NanVec(len(self._s)) if cons is None else cons
+        #self._s = np.zeros(self.repeat*np.prod(self.ndims)) if s is None else s
+        self._s = tensor_vec(np.zeros(self.repeat*np.prod(self.ndims)) if s is None else s, self.ndims, repeat = self.repeat)
+        self._cons = tensor_vec(util.NanVec(len(self._s)) if cons is None else cons, self.ndims, repeat = self.repeat)
         self.set_basis()
-
+        
+    ###################################################
+    
+    ## Fugly, too repetetive, try fewer lines of code
+    
+    ## Handle s and cons
+    
+    
+    def gets(self):
+        return self._s._vec
+    def sets(self, value):
+        self._s._vec = value  
+    def getcons(self):
+        return self._cons._vec
+    def setcons(self, value):
+        self._cons._vec = value
+        
+    s = property(gets, sets)
+    cons = property(getcons, setcons)
+    
+    def get_side(self, side):  ## get self.s, self.cons constrained to side
+        return self._s[side], self._cons[side]
+    
+    def set_side(self, side, s_ = None, cons_ = None):
+        self._s[side] = s_  ## s_ is None => nothing happens
+        self._cons[side] = cons_  ## cons_ is None => nothing happens
+        
+        
+    ###################################################
         
         
     def greville_abs(self):
@@ -481,7 +560,8 @@ class tensor_grid_object(base_grid_object):
         assert len(args) == len(self.knots)
         new_knots = self._knots.ref_by(args)  ## refine the knot_vectors
         new_go = make_go(self.basis_type, self.degree, knots = new_knots) ## dummy go for prolong
-        new_mapping = [self.s if prolong_mapping else None, self.cons if prolong_constraint else None]  ## prolong or set to None
+        ## prolong or set to None
+        new_mapping = [self.s if prolong_mapping else None, self.cons if prolong_constraint else None] 
         new_mapping = self.prolong_func(new_mapping, new_go)
         return tensor_grid_object.with_mapping(*new_mapping, self.degree, knots = new_knots)
     
@@ -653,9 +733,16 @@ class tensor_grid_object_side(tensor_grid_object):
         self._parent = parent
         self._side = side
         indices_ = indices.sides(*parent.ndims, side, repeat = parent.repeat)  ## ugly, make nicer
-        self._s, self.cons = parent.s[indices_], util.NanVec(len(indices_))
+        self._s, self.cons = parent.get_side[side], util.NanVec(len(indices_))
         indices_ = indices.corners(*parent.ndims, side, repeat = parent.repeat)
         self.cons[indices_] = self.s[indices_]
+        
+        
+    def ref_by(self,args):  ##overload this one from the parent class in order to generate geoms of the form domain[side]
+        dim = side_dict[self.side]
+        ref = [[]]*self.repeat
+        ref[dim] = args[0]
+        return self.parent.ref_by(ref)[self.side]
         
         
     @property
