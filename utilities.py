@@ -4,7 +4,6 @@ import scipy.interpolate
 from nutils import *
 import inspect, collections, itertools, copy, functools, abc, pickle
 from matplotlib import pyplot
-from problem_library import Pointset
 from auxilliary_classes import *
 import preprocessor as prep
 from scipy.linalg import block_diag
@@ -192,10 +191,7 @@ class tensor_vec:
     
     def __init__(self, vec, ndims, repeat = 2):
         self._vec, self._ndims = vec, ndims
-        self._side_indices = {'left':0, 'right':0, 'bottom':0, 'top':0}
-        for i in range(len(planar_sides)):
-            side = planar_sides[i]
-            self._side_indices[side] = indices.sides(*ndims, side, repeat = repeat)
+        self._side_indices = indices.sides(*ndims, repeat = repeat)
                                       
     def __getitem__(self, side):
         assert side in planar_sides
@@ -726,16 +722,22 @@ class tensor_grid_object_side(tensor_grid_object):
         dim = side_dict[side]
         return cls(parent, side, parent.degree, parent.domain.boundary[side], parent.geom, ischeme = parent.ischeme, knots = parent._knots[dim])
     
-    
+    ######### INSTANTIATE FROM PARENT__init__ !!!!!!!!!!!!!!!!!!!
     def __init__(self, parent, side, *args, **kwargs): ## should be instantiated with one of the classmethods
         assert side in planar_sides
-        super().__init__(*args, **kwargs)
+        #super().__init__(*args, **kwargs)
+        self.ischeme, self._knots = parent.ischeme, parent._knots[side_dict[side]]
+        self.degree, self.domain, self.geom = args
         self._parent = parent
-        self._side = side
-        indices_ = indices.sides(*parent.ndims, side, repeat = parent.repeat)  ## ugly, make nicer
-        self._s, self.cons = parent.get_side[side], util.NanVec(len(indices_))
-        indices_ = indices.corners(*parent.ndims, side, repeat = parent.repeat)
-        self.cons[indices_] = self.s[indices_]
+        self._side = side  ## ugly, make nicer
+        self._s = parent.get_side(side)[0]
+        print(self._s)
+        self._cons = util.NanVec(len(self.s))
+        indices_ = indices.corners(*parent.ndims, repeat = parent.repeat)[side]
+        print(indices_)
+        self._cons[indices_] = self._s[indices_]
+        self.ndims = [len(k.knots()[0]) + self.degree - 1 for k in self._knots]
+        self.set_basis()
         
         
     def ref_by(self,args):  ##overload this one from the parent class in order to generate geoms of the form domain[side]
@@ -743,7 +745,14 @@ class tensor_grid_object_side(tensor_grid_object):
         ref = [[]]*self.repeat
         ref[dim] = args[0]
         return self.parent.ref_by(ref)[self.side]
-        
+                                 
+    @property
+    def s(self):
+        return self._s
+                                 
+    @property
+    def cons(self):
+        return self._cons
         
     @property
     def parent(self):

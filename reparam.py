@@ -2,7 +2,6 @@ import numpy as np
 import scipy as sp
 import utilities as ut
 from nutils import *
-from problem_library import Pointset
 from auxilliary_classes import *
 
 class reparam(object):

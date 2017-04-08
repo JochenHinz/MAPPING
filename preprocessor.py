@@ -4,7 +4,6 @@ import scipy.interpolate
 from nutils import *
 import inspect
 import collections
-from problem_library import Pointset
 import itertools
 import utilities as ut
 from auxilliary_classes import *

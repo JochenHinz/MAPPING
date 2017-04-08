@@ -15,7 +15,7 @@ import utilities as ut
 Pointset = collections.namedtuple('Pointset', ['verts', 'geom'])
 gauss = 'gauss{:d}'.format
 preproc_info_list = ['cons_lib', 'dirichlet_lib', 'cons_lib_lib', 'error_lib']
-preproc_info = collections.namedtuple('preproc_info', preproc_info_list, verbose = True)
+#preproc_info = collections.namedtuple('preproc_info', preproc_info_list, verbose = True)
 planar_sides = ['left', 'right', 'bottom', 'top']
 side_dict = {'left':1, 'right':1, 'bottom':0, 'top':0}
 opposite_side = {'left': 'right', 'right': 'left', 'bottom': 'top', 'top': 'bottom'}
@@ -26,28 +26,44 @@ corners = lambda n,m: {'left':[0, m-1], 'bottom':[0, n-1], 'top':[0, n-1], 'righ
 class indices:  ## for now only planar, make more efficient
     'returns indices of sides and corners'
     
-    def __init__(self,n,m, side, repeat = 1):
-        self._ndims, self._repeat, self._dim = [n, m], repeat, side_dict[side]
-        self._side_indices = side_indices(n,m)[side]
-        self._corners = corners(n,m)[side]
+    def __init__(self,n,m, repeat = 1):  ## adapt to dims of any size
+        self._ndims, self._repeat = [n, m], repeat
+        self._side_indices = side_indices(n,m)
+        self._corners = corners(n,m)
         
-    def rep(self,target,l):
-        if l == 1:
+    ## FUGLY make nicer
+        
+    def rep_sides(self,target,l):
+        target_ = target.copy()
+        if self._repeat == 1:
             return target
         else:
             for i in range(1,self._repeat):  ## make less nested
-                target += [j + i*l for j in target]
+                for key in target_.keys():
+                    target[key] = target[key] + [j + i*l for j in target[key]]
             return target
+        
+    def rep_corners(self, target, l):
+        target_ = target.copy()
+        if self._repeat == 1:
+            return target
+        else:
+            for i in range(1,self._repeat):  ## make less nested
+                for key in target_.keys():
+                    target[key] = target[key] + [j + i*l[key] for j in target[key]]
+            return target
+        
     
     @staticmethod
     def sides(*args, **kwargs):  ## n, m, side, repeat = repeat
         temp = indices(*args, **kwargs)  ## instantiate temporary object to retrieve indices
-        return temp.rep(temp._side_indices, np.prod(temp._ndims))
+        return temp.rep_sides(temp._side_indices, np.prod(temp._ndims))
     
     @staticmethod
     def corners(*args, **kwargs):
         temp = indices(*args, **kwargs)
-        return temp.rep(temp._corners, temp._ndims[temp._dim])
+        n,m = temp._ndims
+        return temp.rep_corners(temp._corners, {'left': m, 'bottom': n, 'top': n, 'right': m})
     
     
     
