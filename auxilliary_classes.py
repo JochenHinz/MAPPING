@@ -2,7 +2,7 @@ import collections, functools
 import numpy as np
 from nutils import *
 from scipy.linalg import block_diag
-import utilities as ut
+#import utilities as ut
 
 
 ########################################
@@ -15,7 +15,6 @@ import utilities as ut
 Pointset = collections.namedtuple('Pointset', ['verts', 'geom'])
 gauss = 'gauss{:d}'.format
 preproc_info_list = ['cons_lib', 'dirichlet_lib', 'cons_lib_lib', 'error_lib']
-#preproc_info = collections.namedtuple('preproc_info', preproc_info_list, verbose = True)
 planar_sides = ['left', 'right', 'bottom', 'top']
 side_dict = {'left':1, 'right':1, 'bottom':0, 'top':0}
 opposite_side = {'left': 'right', 'right': 'left', 'bottom': 'top', 'top': 'bottom'}
@@ -23,13 +22,71 @@ dim_boundaries = {0: ['left', 'right'], 1: ['bottom', 'top']}
 side_indices = lambda n,m: {'bottom': [i*m for i in range(n)], 'top': [i*m + m - 1 for i in range(n)], 'left': list(range(m)), 'right': list(range((n - 1)*m, n*m))}
 corners = lambda n,m: {'left':[0, m-1], 'bottom':[0, n-1], 'top':[0, n-1], 'right':[0, m-1]}
 
-class indices:  ## for now only planar, make more efficient
+
+def side_indices(fromside, side, *args):  ## returns side_indices for 2D and 1D
+    ##. 3D ain't work yet, the 'side' argument is passed just in case, for 1D we need it
+    if len(args) == 2:
+        n,m = args
+        return {'bottom': [i*m for i in range(n)], 'top': [i*m + m - 1 for i in range(n)], 'left': list(range(m)), 'right': list(range((n - 1)*m, n*m))}[side]
+    elif len(args) == 1:
+        assert side in planar_sides
+        if fromside in ['left', 'right']:
+            return {'bottom':0, 'top': -1}[side]
+        else:
+            return {'left':0, 'right': -1}[side]
+        
+        
+class tensor_index:  ## for now only planar, make more efficient
     'returns indices of sides and corners'
     
-    def __init__(self,n,m, repeat = 1):  ## adapt to dims of any size
-        self._ndims, self._repeat = [n, m], repeat
-        self._side_indices = side_indices(n,m)
-        self._corners = corners(n,m)
+    _p = None 
+    _side = None  
+    _l = 1  ## godfather length
+    _n = 0 ## amount of dims
+    
+    @classmethod
+    def from_go(cls, go):
+        ret = cls(go._ndims, repeat = go.repeat)
+        ret._n, ret._l = len(go.ndims), np.prod(go.ndims)
+        ret._indices = np.asarray([int(i) for i in range(ret._l)], dtype=np.int8)
+        return ret
+    
+    @classmethod
+    def from_parent(cls,parent,side):
+        #######  FUGLY, GET RID OF THIS
+        assert side in planar_sides
+        if parent._side in ['left', 'right']:
+            assert side in ['bottom', 'top']
+        elif parent._side in ['bottom', 'top']:
+            assert side in ['left', 'right']
+        #######  FUGLY, GET RID OF THIS
+        ndims = [parent._ndims[side_dict[side]]] if len(parent._ndims) == 2 else [1]  ## select dimension corresponding to side
+        ret = cls(ndims, repeat = parent._repeat, side = side, fromside = parent._side)  ## instantiate
+        ret._p = parent  ## set parent
+        ret._indices = parent._indices[side_indices(parent._side, side, *parent._ndims)]
+        ret._l, ret._n = parent._l, parent._n - 1
+        return ret
+    
+    def __init__(self, ndims, repeat = 1, side = None, fromside = None):  ## adapt to dims of any size
+        assert len(ndims) < 3, 'Not yet implemented'
+        self._ndims, self._repeat = ndims, repeat
+        self._side = side
+        
+        
+    @property
+    def p(self):
+        return self._p if self._p is not None else self
+    
+    def c(self, side):
+        return tensor_index.from_parent(self,side) if self._n != 0 else self
+    
+    def __getitem__(self,side_):
+        return self.c(side_)
+    
+    @property
+    def indices(self):
+        return np.concatenate([self._indices + i*self._l*np.ones(np.prod(self._ndims), dtype=np.int8) for i in range(self._repeat)])
+        
         
     ## FUGLY make nicer
         
@@ -68,14 +125,14 @@ class indices:  ## for now only planar, make more efficient
     
     
 
-def side_indices(n, m, repeat = 1):  ## args = [n,m], ## soon [n,m, ...]
-    ret_ = {'bottom': [i*m for i in range(n)], 'top': [i*m + m - 1 for i in range(n)], 'left': list(range(m)), 'right': list(range((n - 1)*m, n*m))}
-    l = n*m
-    ret = ret_.copy()
-    for i in range(1,repeat):  ## make less nested
-        for key in planar_sides:
-            ret[key] += [j + i*l for j in ret_[key]]
-    return ret
+#def side_indices(n, m, repeat = 1):  ## args = [n,m], ## soon [n,m, ...]
+#    ret_ = {'bottom': [i*m for i in range(n)], 'top': [i*m + m - 1 for i in range(n)], 'left': list(range(m)), 'right': list(range((n - 1)*m, n*m))}
+#    l = n*m
+#    ret = ret_.copy()
+#    for i in range(1,repeat):  ## make less nested
+#        for key in planar_sides:
+#            ret[key] += [j + i*l for j in ret_[key]]
+#    return ret
             
         
         
@@ -93,11 +150,17 @@ def unit_vector(length, i):
     x = np.zeros(length)
     x[i] = 1
     return x
+
+
+###############################################################
+
+
+## Prolongation / restriction matrix
         
         
 def prolongation_matrix(p, *args):  ## MAKE THIS SPARSE
     ## args = [kv_new, kv_old] is [tensor_kv]*2, if len(kv_new) < len(kv_old) return restriction
-    assert all([len(args) == 2] + [isinstance(k, ut.tensor_kv) and len(k) == 1 for k in args])
+    assert all([len(args) == 2] + [len(k) == 1 for k in args])
     ## make sure we've got 2 tensor_kvs with dimension 1
     assert_params = [args[0] <= args[1], args[1] <= args[0]]
     assert any(assert_params), 'The kvs must be nested'  ## check for nestedness
@@ -122,6 +185,10 @@ def prolongation_matrix(p, *args):  ## MAKE THIS SPARSE
         T = T_new
     return T if not assert_params[0] else np.linalg.inv(T.T.dot(T)).dot(T.T) ## return T if kv_new >= kv_old else the restriction
 
+
+###########################################################
+
+
 def extract_sides(*args):  ## for now only in 2D, args = [s, dim1, dim2, ...]
     if len(args[0]) == np.prod([i for i in args[1:]]):
         return extract_sides_single(*args)
@@ -144,7 +211,11 @@ def extract_sides_multi(s,*args):
         for side in ret.keys():
             ret[side] = np.concatenate(tuple([ret[side], temp[side]]))
     return ret
-    
+
+
+#############################################################
+
+### go.cons prolongation / restriction
 
 def prolong_bc(s, *args, return_type = 'nan'):  ## *args = T_n, T_m,  case distinction ugly !! temporary solution !!
     assert isinstance(s, util.NanVec or np.ndarray)

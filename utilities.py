@@ -313,6 +313,8 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
     
     ## IN THE LONG RUN THESE SHOULD BECOME METHODS OF THE CHILD CLASSES (so no assert necessary)
     
+    ## PLUS IN THE LONG RETURN AN INSTANTIATION OF A GRID OBJECT AS OPPOSED TO CREATING ONE ON THE FLY 
+    
     
     @staticmethod
     def grid_union(leader,follower, prolong = True):  ##tensor_grid_objects
@@ -403,6 +405,17 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         with plot.VTKFile(name) as vtu:
             vtu.unstructuredgrid( points, npars=2 )
             
+    def quick_plot_grid(self, ref = 0):
+        points = self.domain.refine(ref).elem_eval(self.geom, ischeme='bezier5', separate=True)
+        plt = plot.PyPlot('I am a dummy')
+        if len(self) >= 2:
+            plt.mesh(points)
+        else:
+            plt.segments(np.array(points))
+            plt.aspect('equal')
+            plt.autoscale(enable=True, axis='both', tight=True)
+        plt.show()
+            
             
     def quick_plot(self, ref = 0):
         points = self.domain.refine(ref).elem_eval(self.mapping(), ischeme='bezier5', separate=True)
@@ -420,8 +433,12 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         assert self.cons is not None
         assert len(self) > 1, 'Not yet implemented.'
         return self.dot(self.cons | 0)
-        
-        
+    
+    
+    
+##########################################################
+
+## HIERARCHICAL GRID OBJECT, AIN'T WORK YET       
         
         
 class hierarchical_grid_object(base_grid_object):
@@ -467,10 +484,17 @@ class hierarchical_grid_object(base_grid_object):
                 go_.basis = self.domain.basis('spline', degree = self.degree)
             return go_
         
+        
+###################################################################
+
+## TENSOR GRID OBJECT, WORKS 60 %
+        
 
 class tensor_grid_object(base_grid_object):
     
-    basis_type = 'bspline'            
+    basis_type = 'bspline' 
+    _p = None
+    _side = None
     
     @classmethod
     def with_mapping(cls, s, cons, *args, **kwargs):
@@ -484,12 +508,20 @@ class tensor_grid_object(base_grid_object):
     def from_domain(cls):
         return None
     
+    
+    @classmethod
+    def from_parent(cls, parent, side):
+        
+        ret = cls(ndims, parent._target_dim, *args, side = side_)
+        
+    
     #######################
     
     
     ######################################################################################
+    
                     
-    def __init__(self, p, *args, ischeme = 6, knots = None, s = None, cons = None):
+    def __init__(self, p, *args, ischeme = 6, knots = None, s = None, cons = None, side = None, target_space = None):
         assert knots is not None, 'Keyword-argument \'knots\' needs to be provided'
         self.degree, self.ischeme, self._knots = p, ischeme, knots
         if len(args) == 2: ## instantiation via domain, geom
@@ -501,14 +533,18 @@ class tensor_grid_object(base_grid_object):
         else:
             raise ValueError('Invalid amount of arguments supplied')
             
-        self.ndims = [len(k.knots()[0]) + self.degree - 1 for k in self._knots]
+        self._ndims = [len(k.knots()[0]) + self.degree - 1 for k in self._knots]
+        
+        self._target_space = len(self._ndims) if not target_space else target_space
         
         if len(self.ndims) > 2:
             raise NotImplementedError
-        #self._s = np.zeros(self.repeat*np.prod(self.ndims)) if s is None else s
-        self._s = tensor_vec(np.zeros(self.repeat*np.prod(self.ndims)) if s is None else s, self.ndims, repeat = self.repeat)
-        self._cons = tensor_vec(util.NanVec(len(self._s)) if cons is None else cons, self.ndims, repeat = self.repeat)
+        self._side = side
+        self._s = np.zeros(self.repeat*np.prod(self.ndims)) if s is None else s
+        self._cons = util.NanVec(len(self._s)) if cons is None else cons
         self.set_basis()
+        self._indices = tensor_index.from_go(self)
+        
         
     ###################################################
     
@@ -518,26 +554,35 @@ class tensor_grid_object(base_grid_object):
     
     
     def gets(self):
-        return self._s._vec
+        return self._s
     def sets(self, value):
-        self._s._vec = value  
+        self._s = value  
     def getcons(self):
-        return self._cons._vec
+        return self._cons
     def setcons(self, value):
-        self._cons._vec = value
+        self._cons = value
         
     s = property(gets, sets)
     cons = property(getcons, setcons)
     
     def get_side(self, side):  ## get self.s, self.cons constrained to side
-        return self._s[side], self._cons[side]
+        ind = self._indices[side].indices
+        print(ind)
+        return self._s[ind], self._cons[ind]
     
     def set_side(self, side, s_ = None, cons_ = None):
-        self._s[side] = s_  ## s_ is None => nothing happens
-        self._cons[side] = cons_  ## cons_ is None => nothing happens
+        ind = self._indices[side].indices
+        if s_ is not None:
+            self._s[ind] = s_  ## s_ is None => nothing happens
+        if cons_ is not None:
+            self._cons[ind] = cons_  ## cons_ is None => nothing happens
         
         
     ###################################################
+    
+    @property
+    def ndims(self):
+        return self._ndims
         
         
     def greville_abs(self):
