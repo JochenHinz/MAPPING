@@ -2,7 +2,6 @@ import collections, functools
 import numpy as np
 from nutils import *
 from scipy.linalg import block_diag
-#import utilities as ut
 
 
 ########################################
@@ -19,7 +18,6 @@ planar_sides = ['left', 'right', 'bottom', 'top']
 side_dict = {'left':1, 'right':1, 'bottom':0, 'top':0}
 opposite_side = {'left': 'right', 'right': 'left', 'bottom': 'top', 'top': 'bottom'}
 dim_boundaries = {0: ['left', 'right'], 1: ['bottom', 'top']}
-side_indices = lambda n,m: {'bottom': [i*m for i in range(n)], 'top': [i*m + m - 1 for i in range(n)], 'left': list(range(m)), 'right': list(range((n - 1)*m, n*m))}
 corners = lambda n,m: {'left':[0, m-1], 'bottom':[0, n-1], 'top':[0, n-1], 'right':[0, m-1]}
 
 
@@ -93,7 +91,7 @@ class tensor_index:  ## for now only planar, make more efficient
 
 ## Prolongation / restriction matrix
 
-## Make this object-oriented maybe
+## Make prolongation object-oriented maybe
         
         
 def prolongation_matrix(p, *args):  ## MAKE THIS SPARSE
@@ -121,7 +119,8 @@ def prolongation_matrix(p, *args):  ## MAKE THIS SPARSE
                 fac2 = (kv_old[j + 1 + q] - kv_new[i + q])/(kv_old[j + q + 1] - kv_old[j + 1]) if kv_old[j + q + 1] != kv_old[j + 1] else 0
                 T_new[i,j] = fac1*T[i,j] + fac2*T[i,j + 1]
         T = T_new
-    return T if not assert_params[0] else np.linalg.inv(T.T.dot(T)).dot(T.T) ## return T if kv_new >= kv_old else the restriction
+    ## return T if kv_new >= kv_old else the restriction
+    return T if not assert_params[0] else np.linalg.inv(T.T.dot(T)).dot(T.T)
 
 
 ###########################################################
@@ -154,46 +153,6 @@ def extract_sides_multi(s,*args):
 #############################################################
 
 ### go.cons prolongation / restriction
-
-def prolong_bc(s, *args, return_type = 'nan'):  ## *args = T_n, T_m,  case distinction ugly !! temporary solution !!
-    assert isinstance(s, util.NanVec or np.ndarray)
-    if len(args) > 1:
-        return prolong_bc_nD(s, *args, return_type = return_type)
-    else:
-        return prolong_bc_1D(s, *args, return_type = return_type)
-    
-    
-def prolong_bc_1D(s, T, return_type = 'nan'):
-    from_shape = T.shape[1]
-    to_shape = T.shape[0]
-    repeat = len(s) // from_shape  ## determine dimension of vector 
-    if return_type == 'nan':
-        ret = util.NanVec(repeat*to_shape)  ## create empty NanVec of appropriate size
-    else:
-        ret = np.zeros(repeat*to_shape)
-    for i in range(repeat):
-        ret[[j + i*to_shape for j in corner_indices([to_shape])]] = s[[j + i*from_shape for j in corner_indices([from_shape])]]
-    return ret
-    
-    
-def prolong_bc_nD(s, *args, return_type = 'nan'):
-    from_shape = np.prod([T.shape[1] for T in args])
-    to_shape = np.prod([T.shape[0] for T in args])
-    repeat = len(s) // from_shape  ## determine dimension of vector 
-    if return_type == 'nan':
-        ret = util.NanVec(repeat*to_shape)  ## create empty NanVec of appropriate size
-    else:
-        ret = np.zeros(repeat*to_shape)
-    if len(args) != 1:  ## more than one dimension
-        goal_sides = side_indices(*[a.shape[0] for a in args])  ## extract indices w.r.t. to the sides of tensor-product vec
-        for i in range(repeat):  ## make this more elegant (block_diag & stuff)
-            d = extract_sides(s[range(i*from_shape, (i+1)*from_shape)], *[a.shape[1] for a in args])
-            for side in planar_sides:
-                rhs = args[side_dict[side]].dot(d[side])
-                ret[[j + i*to_shape for j in goal_sides[side]]] = rhs
-    else:  ## one dimension: simply prolong with prolongation matrix (times l)
-        ret[:] = block_diag(*[args[1]]*l).dot(s) 
-    return ret
 
 def prolong_bc_go(fromgo, togo, *args, return_type = 'nan'):  ## args = [T_n, T_m , ...]
     to_shape = np.prod(togo._ndims)

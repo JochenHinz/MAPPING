@@ -477,7 +477,8 @@ class hierarchical_grid_object(base_grid_object):
         
 ###################################################################
 
-## TENSOR GRID OBJECT, WORKS 60 %
+## TENSOR GRID OBJECT, WORKS 70 %, missing: extension to nD; n <= 3
+## injection from lower order tensor_gos to parent gos
         
 
 class tensor_grid_object(base_grid_object):
@@ -696,12 +697,13 @@ class tensor_grid_object(base_grid_object):
         assert_params = [tensor_grid_object.are_nested(self,new_go)] + [self.degree <= new_go.degree]
         assert all(assert_params), 'the grid objects are not nested'
         if method == 'T':  ## funcs = [vec1, vec2, ...]
-            Ts = [prolongation_matrix(self.degree, *[new_go._knots[i], self._knots[i]]) for i in range(len(self._knots))]  ## make T_n, T_m, ....
+            ## make T_n, T_m, ....
+            Ts = [prolongation_matrix(self.degree, *[new_go._knots[i], self._knots[i]]) for i in range(len(self._knots))]  
             T = np.kron(*Ts) if len(Ts) != 1 else Ts[0]
             l = self.repeat
             ret = [block_diag(*[T]*l).dot(self.s) if s else None, prolong_bc_go(self, new_go, *Ts) if c else None]
             return ret
-        elif methood == 'greville':
+        elif method == 'greville':
             raise ValueError('Yet to be implemented')
             #assert all([isinstance(func, function.Evaluable) for func in funcs])
             #return prolong_tensor_mapping_gos(funcs, new_go.basis.vector(2), self, new_go)
@@ -735,6 +737,7 @@ class tensor_grid_object(base_grid_object):
     sameclass = lambda x,y:  type(x) == type(y)
     subclass = lambda x,y: issubclass(type(y), type(x))
     superclass = lambda x,y: issubclass(type(x), type(y))
+    samedim = lambda x,y: len(x) == len(y)
     
     
     ###################################################################################
@@ -743,7 +746,7 @@ class tensor_grid_object(base_grid_object):
     
     ##  Operator overloading
     
-    @requires_dependence(sameclass)
+    @requires_dependence(samedim)
     def __add__(self, other):   ## self.cons and self.s are prolonged to unified grid
         if self >= other:  ## grids are nested
             return self
@@ -751,11 +754,11 @@ class tensor_grid_object(base_grid_object):
             return tensor_grid_object.grid_union(self, other)
         
     
-    @requires_dependence(sameclass)
+    @requires_dependence(samedim)
     def __or__(self, other):   ## self.cons is kept and other.s is prolonged to unified grid
         return tensor_grid_object.mg_prolongation(self, other)
     
-    @requires_dependence(sameclass)
+    @requires_dependence(samedim)
     def __sub__(self, other):  
         ## prolong / restrict everything from other to self while keeping self.domain, constrain the corners
         if not tensor_grid_object.are_nested(self,other):  ## grids are not nested => take grid union first
@@ -764,7 +767,7 @@ class tensor_grid_object(base_grid_object):
             fromgrid = other  ## grids are nested => simply take other
         return tensor_grid_object.grid_embedding(self, fromgrid)
             
-    @requires_dependence(sameclass)
+    @requires_dependence(samedim)
     def __mod__(self, other): 
         ## self.cons is kept and other.s is prolonged / restricted into self.grid
         if tensor_grid_object.are_nested(self,other):  ## no grid union necessary
@@ -810,7 +813,7 @@ class tensor_grid_object(base_grid_object):
     
     
     def __mul__(self,other):  ## axuilliary overload in order to make a grid with dimension self.ndims[0] * other.ndims[0]
-        assert all([len(self.ndims) == 1,  len(other.ndims) == 1, self.side != other.side]), 'Not yet implemented'
+        assert all([len(self) == 1,  len(other) == 1, self.side != other.side]), 'Not yet implemented'
         ret = make_go(self.basis_type, self.degree, knots = self._knots * other._knots)
         sides = [self.side, other.side]
         ## ret.s and ret.cons forthcoming
@@ -843,58 +846,7 @@ class tensor_grid_object(base_grid_object):
         
     def __pow__(self, other):  ## see if grids are nested
         return tensor_grid_object.are_nested(self,other)
-    
-    
-class tensor_grid_object_side(tensor_grid_object):
-    'child class of tensor_grid_object corresponding to just one side'
-    
-    @classmethod
-    def from_parent(cls, parent, side):
-        dim = side_dict[side]
-        return cls(parent, side, parent.degree, parent.domain.boundary[side], parent.geom, ischeme = parent.ischeme, knots = parent._knots[dim])
-    
-    ######### INSTANTIATE FROM PARENT__init__ !!!!!!!!!!!!!!!!!!!
-    def __init__(self, parent, side, *args, **kwargs): ## should be instantiated with one of the classmethods
-        assert side in planar_sides
-        #super().__init__(*args, **kwargs)
-        self.ischeme, self._knots = parent.ischeme, parent._knots[side_dict[side]]
-        self.degree, self.domain, self.geom = args
-        self._parent = parent
-        self._side = side  ## ugly, make nicer
-        self._s = parent.get_side(side)[0]
-        print(self._s)
-        self._cons = util.NanVec(len(self.s))
-        indices_ = indices.corners(*parent.ndims, repeat = parent.repeat)[side]
-        print(indices_)
-        self._cons[indices_] = self._s[indices_]
-        self.ndims = [len(k.knots()[0]) + self.degree - 1 for k in self._knots]
-        self.set_basis()
-        
-        
-    def ref_by(self,args):  ##overload this one from the parent class in order to generate geoms of the form domain[side]
-        dim = side_dict[self.side]
-        ref = [[]]*self.repeat
-        ref[dim] = args[0]
-        return self.parent.ref_by(ref)[self.side]
-                                 
-    @property
-    def s(self):
-        return self._s
-                                 
-    @property
-    def cons(self):
-        return self._cons
-        
-    @property
-    def parent(self):
-        return self._parent
-    
-    
-    @property
-    def side(self):
-        return self._side   
-        
-            
+
 
 def make_go(grid_type, *args, **kwargs):
     if grid_type == 'spline':
