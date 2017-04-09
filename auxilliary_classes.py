@@ -86,76 +86,14 @@ class tensor_index:  ## for now only planar, make more efficient
     @property
     def indices(self):
         return np.concatenate([self._indices + i*self._l*np.ones(np.prod(self._ndims), dtype=np.int8) for i in range(self._repeat)])
-        
-        
-    ## FUGLY make nicer
-        
-    def rep_sides(self,target,l):
-        target_ = target.copy()
-        if self._repeat == 1:
-            return target
-        else:
-            for i in range(1,self._repeat):  ## make less nested
-                for key in target_.keys():
-                    target[key] = target[key] + [j + i*l for j in target[key]]
-            return target
-        
-    def rep_corners(self, target, l):
-        target_ = target.copy()
-        if self._repeat == 1:
-            return target
-        else:
-            for i in range(1,self._repeat):  ## make less nested
-                for key in target_.keys():
-                    target[key] = target[key] + [j + i*l[key] for j in target[key]]
-            return target
-        
-    
-    @staticmethod
-    def sides(*args, **kwargs):  ## n, m, side, repeat = repeat
-        temp = indices(*args, **kwargs)  ## instantiate temporary object to retrieve indices
-        return temp.rep_sides(temp._side_indices, np.prod(temp._ndims))
-    
-    @staticmethod
-    def corners(*args, **kwargs):
-        temp = indices(*args, **kwargs)
-        n,m = temp._ndims
-        return temp.rep_corners(temp._corners, {'left': m, 'bottom': n, 'top': n, 'right': m})
-    
-    
-    
-
-#def side_indices(n, m, repeat = 1):  ## args = [n,m], ## soon [n,m, ...]
-#    ret_ = {'bottom': [i*m for i in range(n)], 'top': [i*m + m - 1 for i in range(n)], 'left': list(range(m)), 'right': list(range((n - 1)*m, n*m))}
-#    l = n*m
-#    ret = ret_.copy()
-#    for i in range(1,repeat):  ## make less nested
-#        for key in planar_sides:
-#            ret[key] += [j + i*l for j in ret_[key]]
-#    return ret
-            
-        
-        
-
-def corner_indices(ndims, repeat = 1):  ## 2D => 0D
-    if len(ndims) == 1:
-        return {0: [0], 1: [ndims[0] - 1]}
-    elif len(ndims) == 2:
-        n,m = ndims
-        return {(0,0): 0,  (1,0): m - 1, (0,1): (n-1)*m, (1,1): n*m - 1}
-    else:
-        raise NotImplementedError
-
-def unit_vector(length, i):
-    x = np.zeros(length)
-    x[i] = 1
-    return x
 
 
 ###############################################################
 
 
 ## Prolongation / restriction matrix
+
+## Make this object-oriented maybe
         
         
 def prolongation_matrix(p, *args):  ## MAKE THIS SPARSE
