@@ -45,8 +45,8 @@ class tensor_index:  ## for now only planar, make more efficient
     _n = 0 ## amount of dims
     
     @classmethod
-    def from_go(cls, go):
-        ret = cls(go._ndims, repeat = go.repeat)
+    def from_go(cls, go, *args, **kwargs):
+        ret = cls(go._ndims, repeat = go.repeat, side = go._side)
         ret._n, ret._l = len(go.ndims), np.prod(go.ndims)
         ret._indices = np.asarray([int(i) for i in range(ret._l)], dtype=np.int)
         return ret
@@ -207,6 +207,11 @@ def prolong_bc_go(fromgo, togo, *args, return_type = 'nan'):  ## args = [T_n, T_
             T = block_diag(*[args[side_dict[side]]]*repeat)
             vecs = fromgo.get_side(side)
             ret[togo._indices[side].indices] = T.dot(vecs[1])
+        return ret
+    elif len(args) == 1:
+        for side in togo._sides:
+            vecs = fromgo.get_side(side)
+            ret[togo._indices[side].indices] = vecs[1]
         return ret
     else:
         raise NotImplementedError

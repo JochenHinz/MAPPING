@@ -176,6 +176,11 @@ class tensor_kv:  ## several knot_vectors
         kvs.extend(other._kvs)
         return tensor_kv(*kvs)
     
+    def delete(self,index):
+        kvs = self._kvs.copy()
+        del kvs[index]
+        return tensor_kv[kvs]
+    
     
 
 def grid_object(name, *args, **kwargs):
@@ -500,8 +505,11 @@ class tensor_grid_object(base_grid_object):
     
     @classmethod
     def from_parent(cls, parent, side):
-        
-        ret = cls(ndims, parent._target_dim, *args, side = side_)
+        knots = parent._knots[side_dict[side]]
+        entries = parent.get_side(side)
+        ret = cls.with_mapping(entries[0], entries[1], parent.degree, parent.domain.boundary[side], parent.geom, side = side, target_space = parent._target_space, knots = knots)
+        ret._p = parent
+        return ret
         
     
     #######################
@@ -535,12 +543,11 @@ class tensor_grid_object(base_grid_object):
         self._s = np.zeros(self.repeat*np.prod(self.ndims)) if s is None else s
         self._cons = util.NanVec(len(self._s)) if cons is None else cons
         self.set_basis()
-        self._indices = tensor_index.from_go(self)
+        self._indices = tensor_index.from_go(self, side = side)
         
         
     ###########################################################################################
-    
-    
+     
     def set_sides(self):
         if len(self) == 2:
             self._sides = ['bottom', 'right', 'top', 'left']
@@ -551,12 +558,24 @@ class tensor_grid_object(base_grid_object):
                 self._sides = ['bottom', 'top'] if self._side in ['left', 'right'] else ['left', 'right']
         else:
             raise NotImplementedError
+            
+            
+    @property
+    def p(self):
+        return self._p if self._p is not None else self
+    
+    ## I only from 2D to 1D, 0D not allowed yet, which is why we return self when len(self) == 1
+    def c(self, side):
+        return tensor_grid_object.from_parent(self,side) if len(self) > 1 else self            
+            
+            
+            
+    #############################################################################################
+    
+    ## sides, indices & stuff
 
     
-    ## Fugly, too repetetive, try fewer lines of code
-    
-    ## Handle s and cons
-    
+    ## Fugly, too repetetive, try fewer lines of code    
     
     def gets(self):
         return self._s
@@ -696,7 +715,7 @@ class tensor_grid_object(base_grid_object):
     
     def __getitem__(self,side):
         assert side in planar_sides
-        return tensor_grid_object_side.from_parent(self, side)
+        return self.c(side)
     
     
     
