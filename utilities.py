@@ -318,46 +318,15 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
     
     @staticmethod
     def grid_union(leader,follower, prolong = True):  ##tensor_grid_objects
-    ## take the union of two tensor grids, s and cons of leader will be prolonged
-        assert all([isinstance(g, tensor_grid_object) for g in [leader, follower]] + [leader.degree == follower.degree]), 'Not yet implemented'
-        ## make second assert statement compatible with len(args) > 2
-        kv = leader._knots + follower._knots  ## take union of kvs
-        ret = make_go(leader.basis_type, leader.degree, knots = kv)  ## initialize
-        if prolong:
-            ret.s, ret.cons = leader.prolong_func([leader.s, leader.cons], ret)  ## prolong first grid to unified grid
-        return ret
+        pass
     
     @staticmethod
     def mg_prolongation(fine, coarse, method = 'replace'):  ## multigrid_prolongation
-    ## take the union of the grids but keep the bc of of fine while prolonging coarse.s
-        assert all([isinstance(g, tensor_grid_object) for g in [fine, coarse]] + [fine.degree == coarse.degree]), 'Not yet implemented'
-        ret = base_grid_object.grid_union(fine, coarse, prolong = False)  ## take grid union without prolongation
-        ret.s = coarse.prolong_func([coarse.s], ret)   ## prolong coarse mapping to new grid (temporarily)
-        ret.cons = fine.prolong_func([fine.cons], ret)   ## prolong fine constraints to new grid
-        if method == 'project':  ## ret.s => constrained L2
-            ret.s = np.asarray(ret.project(ret.mapping(), onto = ret.basis.vector(2), constrain = ret.cons))
-        elif method == 'replace':  ## ret.s => combination of cons and s
-            ret.s = np.asarray(ret.cons | ret.s) if len(ret) > 1 else ret.s
-        return ret
+        pass
     
     @staticmethod
     def grid_embedding(receiver, transmitter, prolong_cons = True, constrain_corners = True):  
-    ## prolong / restrict s and possibly cons from transmitter to the grid of receiver (keep receiver.domain)
-        assert all([isinstance(g, tensor_grid_object) for g in [receiver, transmitter]] + [receiver.degree == transmitter.degree]), 'Not yet implemented'
-        ret = copy.deepcopy(receiver)  ## I ain't liking this
-        ret.s, ret.cons = transmitter.prolong_func([transmitter.s, transmitter.cons if prolong_cons else None], ret)  
-        ## prolong / restrict
-        if ret.cons is None:  ## if ret.cons is None => prolong_cons is False, we take old constraints and combine with s
-            ret.cons = receiver.cons
-            ret.s = np.asarray(ret.cons | ret.s)
-        if constrain_corners:  ## we make sure that the resulting geometry still satisfies s(0,0) = p0, s(1,0) = p1, ...
-            assert len(ret.cons) == len(ret.s), 'The constraints and the mapping vector need to possess equal length'
-            repeat, l  = [len(ret.s) // np.prod(ret.ndims), np.prod(ret.ndims)]
-            ci = corner_indices(receiver.ndims)  ## extract the global index of the corners (0,0), (1,0), ...
-            for i in range(repeat):  ## repeat repeat times
-                for coord in ci.keys():
-                    ret.cons[ci[coord] + i*l], ret.s[ci[coord]  + i*l ] = [receiver.s[ci[coord] + i*l]]*2          
-        return ret
+        pass
     
     
     #########################################################################
@@ -382,6 +351,13 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         assert self.basis is not None
         l = self.repeat
         return (self.basis if l == 1 else self.basis.vector(l)).dot(vec)
+    
+    
+    #########################################################################
+    
+    ## PLOTTING
+    
+    ## MAKE LESS REPETETIVE
         
         
     def plot(self, name, ref = 0):
@@ -426,6 +402,15 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
             plt.segments(np.array(points))
             plt.aspect('equal')
             plt.autoscale(enable=True, axis='both', tight=True)
+        plt.show()
+        
+        
+    def quick_plot_boundary(self, ref = 0):
+        points = self.domain.boundary.refine(ref).elem_eval(self.bc(), ischeme='bezier5', separate=True)
+        plt = plot.PyPlot('I am a dummy')
+        plt.segments(np.array(points))
+        plt.aspect('equal')
+        plt.autoscale(enable=True, axis='both', tight=True)
         plt.show()
             
             
@@ -496,6 +481,10 @@ class tensor_grid_object(base_grid_object):
     _p = None
     _side = None
     
+    #####################################
+    
+    ## VARIOUS CALLS TO __init__
+    
     @classmethod
     def with_mapping(cls, s, cons, *args, **kwargs):
         return cls(*args, s = s, cons = cons, **kwargs)
@@ -520,6 +509,8 @@ class tensor_grid_object(base_grid_object):
     
     ######################################################################################
     
+    ### INITIALIZATION, MAKE SHORTER
+    
                     
     def __init__(self, p, *args, ischeme = 6, knots = None, s = None, cons = None, side = None, target_space = None):
         assert knots is not None, 'Keyword-argument \'knots\' needs to be provided'
@@ -532,21 +523,35 @@ class tensor_grid_object(base_grid_object):
             self.domain, self.geom = mesh.rectilinear(self.knots)
         else:
             raise ValueError('Invalid amount of arguments supplied')
-            
-        self._ndims = [len(k.knots()[0]) + self.degree - 1 for k in self._knots]
-        
-        self._target_space = len(self._ndims) if not target_space else target_space
-        
-        if len(self.ndims) > 2:
+           
+        ## _ndims according to basis, might change - making it adaptable to order elevation
+        self._ndims = [len(k.knots()[0]) + self.degree - 1 for k in self._knots] 
+        ## If target_space is not specified assume it equals the dimension of the domain
+        self._target_space = len(self._ndims) if not target_space else target_space 
+        if len(self.ndims) > 2:  ## don't allow for 3D yet
             raise NotImplementedError
-        self._side = side
+        self._side = side  ## set self._side, this is gonna be handy when instantiating from a parent
+        self.set_sides()  ## initialize boundary sides, ugly, find better solution
         self._s = np.zeros(self.repeat*np.prod(self.ndims)) if s is None else s
         self._cons = util.NanVec(len(self._s)) if cons is None else cons
         self.set_basis()
         self._indices = tensor_index.from_go(self)
         
         
-    ###################################################
+    ###########################################################################################
+    
+    
+    def set_sides(self):
+        if len(self) == 2:
+            self._sides = ['bottom', 'right', 'top', 'left']
+        elif len(self) == 1:
+            if self._side is None:
+                self._sides = ['left', 'right']
+            else:
+                self._sides = ['bottom', 'top'] if self._side in ['left', 'right'] else ['left', 'right']
+        else:
+            raise NotImplementedError
+
     
     ## Fugly, too repetetive, try fewer lines of code
     
@@ -567,18 +572,82 @@ class tensor_grid_object(base_grid_object):
     
     def get_side(self, side):  ## get self.s, self.cons constrained to side
         ind = self._indices[side].indices
-        print(ind)
         return self._s[ind], self._cons[ind]
     
-    def set_side(self, side, s_ = None, cons_ = None):
+    def set_side(self, side, s = None, cons = None):
         ind = self._indices[side].indices
-        if s_ is not None:
-            self._s[ind] = s_  ## s_ is None => nothing happens
-        if cons_ is not None:
-            self._cons[ind] = cons_  ## cons_ is None => nothing happens
+        if s is not None:
+            self._s[ind] = s  ## s_ is None => nothing happens
+        if cons is not None:
+            self._cons[ind] = cons  ## cons_ is None => nothing happens
+            
+    def get_corner_indices(self):
+        assert len(self) == 2, 'Corners are only implemented for 2D'
+        ret = []
+        for side1 in ['left', 'right']:
+            for side2 in ['bottom', 'top']:
+                ret = ret + list(self._indices[side1][side2].indices)
+        return np.array(ret, dtype = np.int)
         
         
     ###################################################
+    
+    ## REQUIRED FOR GRID OPERATIONS
+    
+    ## MAKE ADAPTIVE TO 3D
+    
+    
+    @staticmethod
+    def grid_union(leader,follower, prolong = True):  ##tensor_grid_objects
+    ## take the union of two tensor grids, s and cons of leader will be prolonged
+        assert all([isinstance(g, tensor_grid_object) for g in [leader, follower]] + [leader.degree == follower.degree]), 'Not yet implemented'
+        ## make second assert statement compatible with len(args) > 2
+        new_knots = leader._knots + follower._knots  ## take union of kvs
+        ret = tensor_grid_object(leader.degree, knots = new_knots, side = leader._side, target_space = leader._target_space)
+        if prolong:
+            ret.s, ret.cons = leader.prolong_weights(ret)  ## prolong first grid to unified grid
+        return ret
+    
+    @staticmethod
+    def mg_prolongation(fine, coarse, method = 'replace'):  ## multigrid_prolongation
+    ## take the union of the grids but keep the bc of of fine while prolonging coarse.s
+        assert all([isinstance(g, tensor_grid_object) for g in [fine, coarse]] + [fine.degree == coarse.degree]), 'Not yet implemented'
+        ret = tensor_grid_object.grid_union(fine, coarse, prolong = False)  ## take grid union without prolongation
+        ret.s = coarse.prolong_weights(ret, c = False)[0]   ## prolong coarse mapping to new grid (temporarily)
+        ret.cons = fine.prolong_weights(ret, s = False)[1]   ## prolong fine constraints to new grid
+        if method == 'project':  ## ret.s => constrained L2
+            ret.s = np.asarray(ret.project(ret.mapping(), onto = ret.basis.vector(ret.repeat), constrain = ret.cons))
+        elif method == 'replace':  ## ret.s => combination of cons and s
+            ret.s = np.asarray(ret.cons | ret.s) #if len(ret) > 1 else ret.s
+        return ret
+    
+    
+    ################### IMPLEMENT CONSTRAIN CORNERS !!!! #####################
+    @staticmethod
+    def grid_embedding(receiver, transmitter, prolong_constraints = True, constrain_corners = True):  
+    ## prolong / restrict s and possibly cons from transmitter to the grid of receiver (keep receiver.domain)
+        assert all([isinstance(g, tensor_grid_object) for g in [receiver, transmitter]] + [receiver.degree == transmitter.degree]), 'Not yet implemented'
+        ret = copy.deepcopy(receiver)  ## I ain't liking this
+        if prolong_constraints:
+            ret.s, ret.cons = transmitter.prolong_weights(receiver)  
+        ## prolong / restrict
+        else:
+            ## if prolong_cons is False, we take old constraints and combine with s
+            ret.cons = receiver.cons
+            ret.s = np.asarray(ret.cons | transmitter.prolong_weights(ret, c= False)[0])
+        if constrain_corners: ## we make sure that the resulting geometry still satisfies s(0,0) = p0, s(1,0) = p1, ...
+            if len(ret) == 1:
+                pass
+            elif len(ret) == 2:
+                toindex = ret.get_corner_indices()
+                fromindex = receiver.get_corner_indices()
+                ret._s[toindex], ret._cons[toindex] = [receiver._cons[fromindex]]*2
+            else:
+                raise NotImplementedError
+        return ret
+    
+    
+    #########################################################################
     
     @property
     def ndims(self):
@@ -595,36 +664,34 @@ class tensor_grid_object(base_grid_object):
             return self.domain.basis('bspline', degree = degree, knotvalues = self.knots)  ## make case distinction nicer
         else:
             return self.domain.basis('bspline', degree = degree, knotvalues = self.knots).vector(vector)
-        
-        
+         
     def ref_by(self, args, prolong_mapping = True, prolong_constraint = True):  ## args = [ref_index_1, ref_index2]
         assert len(args) == len(self.knots)
         new_knots = self._knots.ref_by(args)  ## refine the knot_vectors
-        new_go = make_go(self.basis_type, self.degree, knots = new_knots) ## dummy go for prolong
+        new_go = tensor_grid_object(self.degree, knots = new_knots, side = self._side, target_space = self._target_space) ## dummy go for prolong
         ## prolong or set to None
-        new_mapping = [self.s if prolong_mapping else None, self.cons if prolong_constraint else None] 
-        new_mapping = self.prolong_func(new_mapping, new_go)
-        return tensor_grid_object.with_mapping(*new_mapping, self.degree, knots = new_knots)
+        new_mapping = self.prolong_weights(new_go, s = prolong_mapping, c = prolong_constraint)
+        return tensor_grid_object.with_mapping(*new_mapping, self.degree, knots = new_knots, side = self._side, target_space = self._target_space)
     
-    def prolong_func(self, funcs, new_go, method = 'T'):  ## ugly, make prettier
+    def prolong_weights(self, new_go, method = 'T', s = True, c = True):  ## ugly, make prettier
         assert_params = [tensor_grid_object.are_nested(self,new_go)] + [self.degree <= new_go.degree]
         assert all(assert_params), 'the grid objects are not nested'
-        if method == 'greville':  ## funcs = [basis.dot(vec), ...], this is for functions as opposed to vectors
-            ## currently not in use
-            assert all([isinstance(func, function.Evaluable) for func in funcs])
-            return prolong_tensor_mapping_gos(funcs, new_go.basis.vector(2), self, new_go)
-        elif method == 'T':  ## funcs = [vec1, vec2, ...]
-            ## only handle vecs, bcs and None
-            assert all([isinstance(func, np.ndarray or util.NanVec) or func is None for func in funcs]) 
-            if all([func is None for func in funcs]):  ## only Nones: make no prolongation matrix but return Nones
-                return funcs[0] if len(funcs) == 1 else funcs
+        if method == 'T':  ## funcs = [vec1, vec2, ...]
             Ts = [prolongation_matrix(self.degree, *[new_go._knots[i], self._knots[i]]) for i in range(len(self._knots))]  ## make T_n, T_m, ....
             T = np.kron(*Ts) if len(Ts) != 1 else Ts[0]
-            l = len(self.basis)
-            f = lambda c: prolong_bc(c, *Ts) if isinstance(c, util.NanVec) else block_diag(*[T]*(len(c) // l)).dot(c)
-            ## return prolongation of vec if not None else None
-            ret = [f(func) if func is not None else None for func in funcs]
-            return ret[0] if len(ret) == 1 else ret
+            l = self.repeat
+            ret = [block_diag(*[T]*l).dot(self.s) if s else None, prolong_bc_go(self, new_go, *Ts) if c else None]
+            return ret
+        elif methood == 'greville':
+            raise ValueError('Yet to be implemented')
+            #assert all([isinstance(func, function.Evaluable) for func in funcs])
+            #return prolong_tensor_mapping_gos(funcs, new_go.basis.vector(2), self, new_go)
+        else:
+            raise NotImplementedError
+            
+    def prolong_function(self):
+        ## Forthcoming
+        pass
     
     
     def __getitem__(self,side):
@@ -662,12 +729,12 @@ class tensor_grid_object(base_grid_object):
         if self >= other:  ## grids are nested
             return self
         else:
-            return base_grid_object.grid_union(self, other)
+            return tensor_grid_object.grid_union(self, other)
         
     
     @requires_dependence(sameclass)
     def __or__(self, other):   ## self.cons is kept and other.s is prolonged to unified grid
-        return base_grid_object.mg_prolongation(self, other)
+        return tensor_grid_object.mg_prolongation(self, other)
     
     @requires_dependence(sameclass)
     def __sub__(self, other):  
@@ -676,7 +743,7 @@ class tensor_grid_object(base_grid_object):
             fromgrid = other + self  ## other on the left because we need to keep other.cons and other.s
         else:
             fromgrid = other  ## grids are nested => simply take other
-        return base_grid_object.grid_embedding(self, fromgrid)
+        return tensor_grid_object.grid_embedding(self, fromgrid)
             
     @requires_dependence(sameclass)
     def __mod__(self, other): 
@@ -689,7 +756,7 @@ class tensor_grid_object(base_grid_object):
             return self | fromgrid
         elif self <= fromgrid:  ## self is subset of other, restrict other to self, while keeping self.cons
             ## We do not have to set constrain_corners to true assuming that self.cons satisfies s(0,0) = p0, ...
-            return base_grid_object.grid_embedding(self, fromgrid, prolong_cons = False)
+            return tensor_grid_object.grid_embedding(self, fromgrid, prolong_constraints = False)
         
         
     

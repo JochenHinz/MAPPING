@@ -24,7 +24,7 @@ corners = lambda n,m: {'left':[0, m-1], 'bottom':[0, n-1], 'top':[0, n-1], 'righ
 
 
 def side_indices(fromside, side, *args):  ## returns side_indices for 2D and 1D
-    ##. 3D ain't work yet, the 'side' argument is passed just in case, for 1D we need it
+    ## 3D ain't work yet, the 'side' argument is passed just in case, for 1D we need it
     if len(args) == 2:
         n,m = args
         return {'bottom': [i*m for i in range(n)], 'top': [i*m + m - 1 for i in range(n)], 'left': list(range(m)), 'right': list(range((n - 1)*m, n*m))}[side]
@@ -48,7 +48,7 @@ class tensor_index:  ## for now only planar, make more efficient
     def from_go(cls, go):
         ret = cls(go._ndims, repeat = go.repeat)
         ret._n, ret._l = len(go.ndims), np.prod(go.ndims)
-        ret._indices = np.asarray([int(i) for i in range(ret._l)], dtype=np.int8)
+        ret._indices = np.asarray([int(i) for i in range(ret._l)], dtype=np.int)
         return ret
     
     @classmethod
@@ -85,7 +85,7 @@ class tensor_index:  ## for now only planar, make more efficient
     
     @property
     def indices(self):
-        return np.concatenate([self._indices + i*self._l*np.ones(np.prod(self._ndims), dtype=np.int8) for i in range(self._repeat)])
+        return np.concatenate([self._indices + i*self._l*np.ones(np.prod(self._ndims), dtype=np.int) for i in range(self._repeat)])
 
 
 ###############################################################
@@ -194,3 +194,19 @@ def prolong_bc_nD(s, *args, return_type = 'nan'):
     else:  ## one dimension: simply prolong with prolongation matrix (times l)
         ret[:] = block_diag(*[args[1]]*l).dot(s) 
     return ret
+
+def prolong_bc_go(fromgo, togo, *args, return_type = 'nan'):  ## args = [T_n, T_m , ...]
+    to_shape = np.prod(togo._ndims)
+    repeat = togo.repeat
+    if return_type == 'nan':
+        ret = util.NanVec(repeat*to_shape)  ## create empty NanVec of appropriate size
+    else:
+        ret = np.zeros(repeat*to_shape)
+    if len(args) == 2:  ## more than one dimension
+        for side in togo._sides:
+            T = block_diag(*[args[side_dict[side]]]*repeat)
+            vecs = fromgo.get_side(side)
+            ret[togo._indices[side].indices] = T.dot(vecs[1])
+        return ret
+    else:
+        raise NotImplementedError
