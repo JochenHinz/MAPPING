@@ -135,6 +135,12 @@ class tensor_kv:  ## several knot_vectors
         assert n < self.ndims
         return tensor_kv(self._kvs[n])
     
+    def __setitem__(self,n, value):  ## in __getitem__ we do not return _kvs[n] but a new tensor_kv with new._kvs = [self._kvs[n]]
+        assert n < self.ndims
+        new_kvs = self._kvs.copy()
+        new_kvs[n] = value
+        return tensor_kv(new_kvs)
+    
     def __len__(self):
         return self.ndims
     
@@ -240,8 +246,6 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
     
     ## Handling of s (mapping) and cons (constraints) virtual
     
-    ## FUGLY, too repetetive, try to find better solution
-    
     @abc.abstractmethod
     def gets(self):
         pass
@@ -309,28 +313,27 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         
     @property
     def repeat(self):  ## this one gives the ratio len(s) // len(basis), make this adaptive to nD
-        #assert self.s is not None
-        #return len(self.s) // len(self.basis)
-        return 2
+        return self._target_space
         
         
     #########################################################################
     
-    ## IN THE LONG RUN THESE SHOULD BECOME METHODS OF THE CHILD CLASSES (so no assert necessary)
-    
-    ## PLUS IN THE LONG RETURN AN INSTANTIATION OF A GRID OBJECT AS OPPOSED TO CREATING ONE ON THE FLY 
+    ## NECESSARY INGREDIENTS FOR + - // | %
     
     
     @staticmethod
-    def grid_union(leader,follower, prolong = True):  ##tensor_grid_objects
+    @abc.abstractmethod  
+    def grid_union(*args, **kwargs):  ##tensor_grid_objects
         pass
     
     @staticmethod
-    def mg_prolongation(fine, coarse, method = 'replace'):  ## multigrid_prolongation
+    @abc.abstractmethod  
+    def mg_prolongation(*args, **kwargs):  ## multigrid_prolongation
         pass
     
     @staticmethod
-    def grid_embedding(receiver, transmitter, prolong_cons = True, constrain_corners = True):  
+    @abc.abstractmethod  
+    def grid_embedding(*args, **kwargs):  
         pass
     
     
@@ -357,12 +360,16 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         l = self.repeat
         return (self.basis if l == 1 else self.basis.vector(l)).dot(vec)
     
+    def bc(self):
+        assert len(self) > 1, 'Not yet implemented.'
+        return self.dot(self.cons | 0)
+    
     
     #########################################################################
     
     ## PLOTTING
     
-    ## MAKE LESS REPETETIVE
+    ## MAKE LESS REPETETIVE with decorator
         
         
     def plot(self, name, ref = 0):
@@ -398,8 +405,8 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         plt.show()
             
             
-    def quick_plot(self, ref = 0):
-        points = self.domain.refine(ref).elem_eval(self.mapping(), ischeme='bezier5', separate=True)
+    def quick_plot(self, *args):
+        points = (self.domain.refine(args[0]) if len(args) != 0 else self.domain).elem_eval(self.mapping(), ischeme='bezier5', separate=True)
         plt = plot.PyPlot('I am a dummy')
         if len(self) >= 2:
             plt.mesh(points)
@@ -417,12 +424,6 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         plt.aspect('equal')
         plt.autoscale(enable=True, axis='both', tight=True)
         plt.show()
-            
-            
-    def bc(self):
-        assert self.cons is not None
-        assert len(self) > 1, 'Not yet implemented.'
-        return self.dot(self.cons | 0)
     
     
     
@@ -493,16 +494,7 @@ class tensor_grid_object(base_grid_object):
     
     @classmethod
     def with_mapping(cls, s, cons, *args, **kwargs):
-        return cls(*args, s = s, cons = cons, **kwargs)
-    
-    #######################
-    
-    ##Forthcoming
-    
-    @classmethod
-    def from_domain(cls):
-        return None
-    
+        return cls(*args, s = s, cons = cons, **kwargs)    
     
     @classmethod
     def from_parent(cls, parent, side):
@@ -511,9 +503,12 @@ class tensor_grid_object(base_grid_object):
         ret = cls.with_mapping(entries[0], entries[1], parent.degree, parent.domain.boundary[side], parent.geom, side = side, target_space = parent._target_space, knots = knots)
         ret._p = parent
         return ret
-        
     
-    #######################
+    
+    ##Forthcoming
+    @classmethod
+    def from_domain(cls):
+        return None
     
     
     ######################################################################################
@@ -620,7 +615,7 @@ class tensor_grid_object(base_grid_object):
     @staticmethod
     def grid_union(leader,follower, prolong = True):  ##tensor_grid_objects
     ## take the union of two tensor grids, s and cons of leader will be prolonged
-        assert all([isinstance(g, tensor_grid_object) for g in [leader, follower]] + [leader.degree == follower.degree]), 'Not yet implemented'
+        assert leader.degree == follower.degree, 'Not yet implemented'
         ## make second assert statement compatible with len(args) > 2
         new_knots = leader._knots + follower._knots  ## take union of kvs
         ret = tensor_grid_object(leader.degree, knots = new_knots, side = leader._side, target_space = leader._target_space)
@@ -631,7 +626,7 @@ class tensor_grid_object(base_grid_object):
     @staticmethod
     def mg_prolongation(fine, coarse, method = 'replace'):  ## multigrid_prolongation
     ## take the union of the grids but keep the bc of of fine while prolonging coarse.s
-        assert all([isinstance(g, tensor_grid_object) for g in [fine, coarse]] + [fine.degree == coarse.degree]), 'Not yet implemented'
+        assert fine.degree == coarse.degree, 'Not yet implemented'
         ret = tensor_grid_object.grid_union(fine, coarse, prolong = False)  ## take grid union without prolongation
         ret.s = coarse.prolong_weights(ret, c = False)[0]   ## prolong coarse mapping to new grid (temporarily)
         ret.cons = fine.prolong_weights(ret, s = False)[1]   ## prolong fine constraints to new grid
@@ -642,11 +637,11 @@ class tensor_grid_object(base_grid_object):
         return ret
     
     
-    ################### IMPLEMENT CONSTRAIN CORNERS !!!! #####################
+    ################### IMPLEMENT CONSTRAIN CORNERS FOR nD !!!! #####################
     @staticmethod
     def grid_embedding(receiver, transmitter, prolong_constraints = True, constrain_corners = True):  
     ## prolong / restrict s and possibly cons from transmitter to the grid of receiver (keep receiver.domain)
-        assert all([isinstance(g, tensor_grid_object) for g in [receiver, transmitter]] + [receiver.degree == transmitter.degree]), 'Not yet implemented'
+        assert receiver.degree == transmitter.degree, 'Not yet implemented'
         ret = copy.deepcopy(receiver)  ## I ain't liking this
         if prolong_constraints:
             ret.s, ret.cons = transmitter.prolong_weights(receiver)  
@@ -656,7 +651,7 @@ class tensor_grid_object(base_grid_object):
             ret.cons = receiver.cons
             ret.s = np.asarray(ret.cons | transmitter.prolong_weights(ret, c= False)[0])
         if constrain_corners: ## we make sure that the resulting geometry still satisfies s(0,0) = p0, s(1,0) = p1, ...
-            if len(ret) == 1:
+            if len(ret) == 1:  ## for 1D not yet implemented
                 pass
             elif len(ret) == 2:
                 toindex = ret.get_corner_indices()
@@ -688,7 +683,8 @@ class tensor_grid_object(base_grid_object):
     def ref_by(self, args, prolong_mapping = True, prolong_constraint = True):  ## args = [ref_index_1, ref_index2]
         assert len(args) == len(self.knots)
         new_knots = self._knots.ref_by(args)  ## refine the knot_vectors
-        new_go = tensor_grid_object(self.degree, knots = new_knots, side = self._side, target_space = self._target_space) ## dummy go for prolong
+        ## dummy go for prolong
+        new_go = tensor_grid_object(self.degree, knots = new_knots, side = self._side, target_space = self._target_space)
         ## prolong or set to None
         new_mapping = self.prolong_weights(new_go, s = prolong_mapping, c = prolong_constraint)
         return tensor_grid_object.with_mapping(*new_mapping, self.degree, knots = new_knots, side = self._side, target_space = self._target_space)
@@ -738,6 +734,8 @@ class tensor_grid_object(base_grid_object):
     subclass = lambda x,y: issubclass(type(y), type(x))
     superclass = lambda x,y: issubclass(type(x), type(y))
     samedim = lambda x,y: len(x) == len(y)
+    subdim = lambda x,y: len(y) == len(x) - 1
+    same_degree = lambda x,y: x.degree == y.degree
     
     
     ###################################################################################
@@ -754,11 +752,11 @@ class tensor_grid_object(base_grid_object):
             return tensor_grid_object.grid_union(self, other)
         
     
-    @requires_dependence(samedim)
+    @requires_dependence(samedim, same_degree)
     def __or__(self, other):   ## self.cons is kept and other.s is prolonged to unified grid
         return tensor_grid_object.mg_prolongation(self, other)
     
-    @requires_dependence(samedim)
+    @requires_dependence(samedim, same_degree)
     def __sub__(self, other):  
         ## prolong / restrict everything from other to self while keeping self.domain, constrain the corners
         if not tensor_grid_object.are_nested(self,other):  ## grids are not nested => take grid union first
@@ -766,8 +764,18 @@ class tensor_grid_object(base_grid_object):
         else:
             fromgrid = other  ## grids are nested => simply take other
         return tensor_grid_object.grid_embedding(self, fromgrid)
+    
+    @requires_dependence(samedim, same_degree)
+    def __floordiv__(self, other):
+        ## same as self - other but without constraining the corners
+        if not tensor_grid_object.are_nested(self,other):  ## grids are not nested => take grid union first
+            fromgrid = other + self  ## other on the left because we need to keep other.cons and other.s
+        else:
+            fromgrid = other  ## grids are nested => simply take other
+        return tensor_grid_object.grid_embedding(self, fromgrid, constrain_corners = False)
+        
             
-    @requires_dependence(samedim)
+    @requires_dependence(samedim, same_degree)
     def __mod__(self, other): 
         ## self.cons is kept and other.s is prolonged / restricted into self.grid
         if tensor_grid_object.are_nested(self,other):  ## no grid union necessary
@@ -786,21 +794,29 @@ class tensor_grid_object(base_grid_object):
         
     ## go and go_[side] operations
     
-    @requires_dependence(subclass)
+    @requires_dependence(subdim)
     def extend(self,other):  ## exact 
         ## extend other to go[side] using a grid union in the side-direction replacing cons and s there, prolong the rest
-        assert all([len(self) == 2, len(other) == 1]), 'Dimension mismatch'
-        assert hasattr(other, 'side')
-        ## Forthcoming
-        return None
+        assert hasattr(other, '_side')
+        dim = side_dict[other._side]
+        ## prolong 1D go
+        other_ = copy.deepcopy(other) + tensor_grid_object(other.degree, knots = other._knots + self._knots[dim], side = other._side)
+        print(self[other._side]._ndims, other_.ndims, 'ndims')
+        new_knots = copy.deepcopy(self._knots)
+        new_knots[dim] = other_._knots._kvs[0]  ## extend knots in corresponding direction
+        print(self.knots, new_knots.knots())
+        new_go = copy.deepcopy(self) + tensor_grid_object(self.degree, knots = new_knots)
+        new_go.set_side(other._side, s = other_.s, cons = other_.s)
+        self.quick_plot()
+        return new_go
         
-    @requires_dependence(subclass)    
+    @requires_dependence(subdim)    
     def replace(self,other):  ## exact w.r.t. to other.side, possibly inexact w.r.t. self[oppositeside]
         ## replace self[side] by other go[oppositeside] is restricted / prolonged to kv in corresponding direction
         ## Forthcoming
         return None
     
-    @requires_dependence(subclass)
+    @requires_dependence(subdim)
     def inject(self,other):  ## possibly inexact
         ## coarsen other to self[side], keeping everythig else intact
         ## Forthcoming
@@ -808,7 +824,7 @@ class tensor_grid_object(base_grid_object):
     
     
     
-    ## go[side], go_[otherisde] operations ## move this to subclass
+    ## go[side], go_[otherisde] operations
     
     
     

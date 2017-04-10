@@ -3,17 +3,7 @@ import scipy as sp
 from nutils import *
 from auxilliary_classes import *
 import utilities as ut
-import collections
-import os
-import sys
-import xml.etree.ElementTree as ET
 
-pathdir = os.path.dirname(os.path.realpath(__file__))
-
-
-###################################################
-
-## Tidy up ! Use as much from utilities as possible
 
 def square_go(ndims,p):
     kv = np.prod([ut.nonuniform_kv(np.linspace(0,1,n+1)) for n in ndims])
