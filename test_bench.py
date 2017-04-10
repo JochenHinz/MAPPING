@@ -23,3 +23,13 @@ def circle_go(ndims,p):
     cons = domain.boundary.project(func, geometry = geom, onto = basis, ischeme = 'gauss6')
     s = np.array(domain.project(func, geometry = geom, onto = basis, ischeme = 'gauss6', constraints = cons))
     return ut.tensor_grid_object.with_mapping(s,cons,p, knots = kv)
+
+
+
+def cube_go(ndims,p):
+    kv = ut.tensor_kv(*[ut.nonuniform_kv(np.linspace(0,1,n+1)) for n in ndims])
+    domain, geom = mesh.rectilinear(kv.knots())
+    basis = domain.basis('bspline', degree = p, knotvalues = kv.knots()).vector(3)
+    cons = domain.boundary.project(geom, geometry = geom, onto = basis, ischeme = 'gauss6')
+    s = np.array(domain.project(geom, geometry = geom, onto = basis, ischeme = 'gauss6', constraints = cons))
+    return ut.tensor_grid_object.with_mapping(s,cons,p, knots = kv)

@@ -238,28 +238,6 @@ def grid_object(name, *args, **kwargs):
         return tensor_grid_object(*args, **kwargs)
     else:
         raise ValueError('Unknown grid type ' + name)
-        
-        
-class tensor_vec:
-    
-    def __init__(self, vec, ndims, repeat = 2):
-        self._vec, self._ndims = vec, ndims
-        self._side_indices = indices.sides(*ndims, repeat = repeat)
-                                      
-    def __getitem__(self, side):
-        assert side in planar_sides
-        return self._vec[self._side_indices[side]]
-    
-    def __setitem__(self, side, vec):
-        assert side in planar_sides
-        if vec is not None:
-            self._vec[self._side_indices[side]] = vec
-        else:
-            pass
-    
-    def __len__(self):
-        return len(self._vec)
-        
 
 class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
     _s = None
@@ -581,11 +559,11 @@ class tensor_grid_object(base_grid_object):
             raise ValueError('Invalid amount of arguments supplied')
            
         ## _ndims according to basis, might change - making it adaptable to order elevation
-        self._ndims = [len(k.knots()[0]) + self.degree - 1 for k in self._knots] 
+        self._ndims = [len(k.knots()[0]) + self.degree - 1 for k in self._knots]
         ## If target_space is not specified assume it equals the dimension of the domain
         self._target_space = len(self._ndims) if not target_space else target_space 
-        if len(self.ndims) > 2:  ## don't allow for 3D yet
-            raise NotImplementedError
+        #if len(self.ndims) > 2:  ## don't allow for 3D yet
+        #    raise NotImplementedError
         self._side = side  ## set self._side, this is gonna be handy when instantiating from a parent
         self.set_sides()  ## initialize boundary sides, ugly, find better solution
         self._s = np.zeros(self.repeat*np.prod(self.ndims)) if s is None else s
@@ -605,7 +583,7 @@ class tensor_grid_object(base_grid_object):
             else:
                 self._sides = ['bottom', 'top'] if self._side in ['left', 'right'] else ['left', 'right']
         else:
-            raise NotImplementedError
+            self._sides = ['left', 'right', 'bottom', 'top', 'front', 'back']
             
             
     @property
@@ -764,7 +742,6 @@ class tensor_grid_object(base_grid_object):
     
     
     def __getitem__(self,side):
-        assert side in planar_sides
         return self.c(side)
     
     
