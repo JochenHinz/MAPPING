@@ -554,7 +554,8 @@ class tensor_grid_object(base_grid_object):
     
     @property
     def _init_kwargs(self):
-        return dict(ischeme=self.ischeme, knots=self.knots, ...)
+        pass
+        #return dict(ischeme=self.ischeme, knots=self.knots, ...)
     
     def _update(self, **update):
         kwargs = self._init_kwargs
