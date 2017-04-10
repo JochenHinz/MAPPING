@@ -96,11 +96,11 @@ class tensor_index:  ## for now only planar, make more efficient
         
 def prolongation_matrix(p, *args):  ## MAKE THIS SPARSE
     ## args = [kv_new, kv_old] is [tensor_kv]*2, if len(kv_new) < len(kv_old) return restriction
-    #assert all([len(args) == 2] + [len(k) == 1 for k in args])
+    assert all([len(args) == 2] + [len(k) == 1 for k in args])
     ## make sure we've got 2 tensor_kvs with dimension 1
     assert_params = [args[0] <= args[1], args[1] <= args[0]]
     assert any(assert_params), 'The kvs must be nested'  ## check for nestedness
-    kv_new, kv_old = [k.extend_knots(p) for k in args] ## repeat first and last knots
+    kv_new, kv_old = [k.extend_knots(p)[0] for k in args] ## repeat first and last knots
     if assert_params[0]:  ## kv_new <= kv_old, reverse order 
         kv_new, kv_old = list(reversed([kv_new, kv_old]))
     n = len(kv_new) - 1

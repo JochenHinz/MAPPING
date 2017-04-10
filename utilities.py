@@ -83,13 +83,15 @@ class uniform_kv(knot_object):
 class nonuniform_kv(knot_object):
     
     def __init__(self, knots):
-        knot_object.__init__(self,knots = np.round(knots,10))   ### THIS IS FOR TESTING PURPOSES, I DON'T ACTUALLY WANNA BE ROUNDING HERE
+        knot_object.__init__(self,knots = np.round(knots,10)) 
+        ### THIS IS FOR TESTING PURPOSES, I DON'T ACTUALLY WANNA BE ROUNDING HERE
         
         
     def ref_by(self,indices):
         if len(indices) == 0:
             return self
-        assert all([len(indices) <= self.n, np.max(indices) < self.n])  ## amount of indices is of course smaller than the amount of elements
+        assert all([len(indices) <= self.n, np.max(indices) < self.n])
+        ## amount of indices is of course smaller than the amount of elements
         new_knots = self._knots
         add = (np.asarray([new_knots[i+1] for i in indices]) + np.asarray([new_knots[i] for i in indices]))/2.0
         new_knots = numpy.insert(new_knots, [i + 1 for i in indices], add )
@@ -113,9 +115,13 @@ class nonuniform_kv(knot_object):
         return tensor_kv(self,other)
     
 
+###########################################################################################
+
+## old version of tensor_kv, replaced by a version that inherits from np.ndarray
+    
     
 @functools.total_ordering  
-class tensor_kv:  ## several knot_vectors
+class tensor_kv_:  ## several knot_vectors
     
     ###################################################################
     
@@ -187,6 +193,42 @@ class tensor_kv:  ## several knot_vectors
         del kvs[index]
         return tensor_kv[kvs]
     
+    
+###################################################################################
+    
+    
+@functools.total_ordering     
+class tensor_kv( numpy.ndarray ):
+
+    def __new__( cls, *args ):
+        obj = np.asarray(args).view(cls)
+        return obj
+    
+    def knots(self, ref = 0):  ## return 
+        return [k.knots()[0] for k in self]
+    
+    def ref_by(self, indices):  ## element-wise, indices = [[...], [...], ...]
+        assert len(indices) == len(self)
+        return tensor_kv(*[self[i].ref_by(indices[i]) for i in range(len(self))])
+    
+    def extend_knots(self, p):
+        return [k.extend_knots(p) for k in self]  
+    
+    def at(self,n):  ## in __getitem__ we do not return _kvs[n] but a new tensor_kv with new._kvs = [self._kvs[n]]
+        assert n < len(self)
+        return tensor_kv(self[n])
+    
+    def __le__(self, other):
+        if len(self) != len(other):  ## dimensionality does not match: return False
+            return False
+        elif len(self) == 1:
+            return self._kvs[0] <= other._kvs[0]  ## if len(_kvs) == 1, we access _kvs[0] directly and compare
+        else:
+            ## if len(self) != 1, call __le__ len(self) times with len(item) == 1 tensor_kv's
+            return all([self[i] <= other[i] for i in range(len(self))])
+        
+    def __mul__(self,other):
+        raise NotImplementedError
     
 
 def grid_object(name, *args, **kwargs):
@@ -498,7 +540,7 @@ class tensor_grid_object(base_grid_object):
     
     @classmethod
     def from_parent(cls, parent, side):
-        knots = parent._knots[side_dict[side]]
+        knots = tensor_kv(parent._knots[side_dict[side]])
         entries = parent.get_side(side)
         ret = cls.with_mapping(entries[0], entries[1], parent.degree, parent.domain.boundary[side], parent.geom, side = side, target_space = parent._target_space, knots = knots)
         ret._p = parent
@@ -510,6 +552,15 @@ class tensor_grid_object(base_grid_object):
     def from_domain(cls):
         return None
     
+    @property
+    def _init_kwargs(self):
+        return dict(ischeme=self.ischeme, knots=self.knots, ...)
+    
+    def _update(self, **update):
+        kwargs = self._init_kwargs
+        kwargs.update(update)
+        return type(self)(**kwargs)
+    
     
     ######################################################################################
     
@@ -518,7 +569,7 @@ class tensor_grid_object(base_grid_object):
                     
     def __init__(self, p, *args, ischeme = 6, knots = None, s = None, cons = None, side = None, target_space = None):
         assert knots is not None, 'Keyword-argument \'knots\' needs to be provided'
-        self.degree, self.ischeme, self._knots = p, ischeme, knots
+        self.degree, self.ischeme, self._knots = p, ischeme, knots.copy()
         if len(args) == 2: ## instantiation via domain, geom
             assert args[0].ndims == 1
             self.domain, self.geom = args
@@ -736,6 +787,7 @@ class tensor_grid_object(base_grid_object):
     samedim = lambda x,y: len(x) == len(y)
     subdim = lambda x,y: len(y) == len(x) - 1
     same_degree = lambda x,y: x.degree == y.degree
+    has_side = lambda x,y: hasattr(y, '_side')
     
     
     ###################################################################################
@@ -794,33 +846,34 @@ class tensor_grid_object(base_grid_object):
         
     ## go and go_[side] operations
     
-    @requires_dependence(subdim)
+    @requires_dependence(subdim, has_side)
     def extend(self,other):  ## exact 
         ## extend other to go[side] using a grid union in the side-direction replacing cons and s there, prolong the rest
-        assert hasattr(other, '_side')
         dim = side_dict[other._side]
         ## prolong 1D go
-        other_ = copy.deepcopy(other) + tensor_grid_object(other.degree, knots = other._knots + self._knots[dim], side = other._side)
-        print(self[other._side]._ndims, other_.ndims, 'ndims')
+        other_ = copy.deepcopy(other) + tensor_grid_object(other.degree, knots = other._knots + tensor_kv(self._knots[dim]), side = other._side)
         new_knots = copy.deepcopy(self._knots)
-        new_knots[dim] = other_._knots._kvs[0]  ## extend knots in corresponding direction
-        print(self.knots, new_knots.knots())
+        new_knots[dim] = other_._knots[0]  ## EXTEND knots in corresponding direction
         new_go = copy.deepcopy(self) + tensor_grid_object(self.degree, knots = new_knots)
         new_go.set_side(other._side, s = other_.s, cons = other_.s)
-        self.quick_plot()
         return new_go
         
-    @requires_dependence(subdim)    
+    @requires_dependence(subdim, has_side)    
     def replace(self,other):  ## exact w.r.t. to other.side, possibly inexact w.r.t. self[oppositeside]
-        ## replace self[side] by other go[oppositeside] is restricted / prolonged to kv in corresponding direction
-        ## Forthcoming
-        return None
+        ## replace self[side] by other, go[oppositeside] is restricted / prolonged to kv in corresponding direction
+        dim = side_dict[other._side]
+        new_knots = copy.deepcopy(self._knots)
+        new_knots[dim] = other._knots[0]  ## REPLACE knots in corresponding direction
+        new_go = tensor_grid_object(self.degree, knots = new_knots, side = self._side, target_space = self._target_space)
+        new_go = new_go - copy.deepcopy(self)
+        new_go.set_side(other._side, s = other.s, cons = other.s)
+        return new_go
     
-    @requires_dependence(subdim)
+    @requires_dependence(subdim, has_side)
     def inject(self,other):  ## possibly inexact
         ## coarsen other to self[side], keeping everythig else intact
-        ## Forthcoming
-        return None
+        temp = self[other._side] - copy.deepcopy(other)
+        return self.extend(temp)
     
     
     
@@ -830,7 +883,7 @@ class tensor_grid_object(base_grid_object):
     
     def __mul__(self,other):  ## axuilliary overload in order to make a grid with dimension self.ndims[0] * other.ndims[0]
         assert all([len(self) == 1,  len(other) == 1, self.side != other.side]), 'Not yet implemented'
-        ret = make_go(self.basis_type, self.degree, knots = self._knots * other._knots)
+        ret = tensor_grid_object(self.degree, knots = self._knots * other._knots)
         sides = [self.side, other.side]
         ## ret.s and ret.cons forthcoming
         return ret
@@ -873,7 +926,7 @@ def make_go(grid_type, *args, **kwargs):
         raise ValueError('unknown type ' + grid_type)
         
         
-class multigrid_object(object):
+class multigrid_object:
     
     _gos = []
     
