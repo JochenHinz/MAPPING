@@ -562,8 +562,8 @@ class tensor_grid_object(base_grid_object):
         self._ndims = [len(k.knots()[0]) + self.degree - 1 for k in self._knots]
         ## If target_space is not specified assume it equals the dimension of the domain
         self._target_space = len(self._ndims) if not target_space else target_space 
-        #if len(self.ndims) > 2:  ## don't allow for 3D yet
-        #    raise NotImplementedError
+        if len(self.ndims) > 2:  ## don't allow for 3D yet
+            raise NotImplementedError
         self._side = side  ## set self._side, this is gonna be handy when instantiating from a parent
         self.set_sides()  ## initialize boundary sides, ugly, find better solution
         self._s = np.zeros(self.repeat*np.prod(self.ndims)) if s is None else s

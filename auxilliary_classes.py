@@ -13,17 +13,27 @@ from scipy.linalg import block_diag
 
 Pointset = collections.namedtuple('Pointset', ['verts', 'geom'])
 gauss = 'gauss{:d}'.format
+preproc_info_list = ['cons_lib', 'dirichlet_lib', 'cons_lib_lib', 'error_lib']
 planar_sides = ['left', 'right', 'bottom', 'top']
 side_dict = {'left':1, 'right':1, 'bottom':0, 'top':0}
 opposite_side = {'left': 'right', 'right': 'left', 'bottom': 'top', 'top': 'bottom'}
 dim_boundaries = {0: ['left', 'right'], 1: ['bottom', 'top']}
 corners = lambda n,m: {'left':[0, m-1], 'bottom':[0, n-1], 'top':[0, n-1], 'right':[0, m-1]}
 
-bnames = ('left', 'right'), ('bottom', 'top'), ('back', 'front')
-map_bnames_dim = {name: dim for dim, names in enumerate(bnames) for name in names}
-slices = {name: (slice(None),)*dim+(side,) for dim, names in enumerate(bnames) for name, side in zip(names, ([0],[-1]))}
-    
-    
+
+def side_indices(fromside, side, *args):  ## returns side_indices for 2D and 1D
+    ## 3D ain't work yet, the 'side' argument is passed just in case, for 1D we need it
+    if len(args) == 2:
+        n,m = args
+        return {'bottom': [i*m for i in range(n)], 'top': [i*m + m - 1 for i in range(n)], 'left': list(range(m)), 'right': list(range((n - 1)*m, n*m))}[side]
+    elif len(args) == 1:
+        assert side in planar_sides
+        if fromside in ['left', 'right']:
+            return {'bottom':0, 'top': -1}[side]
+        else:
+            return {'left':0, 'right': -1}[side]
+        
+        
 class tensor_index:  ## for now only planar, make more efficient
     'returns indices of sides and corners'
     
@@ -36,61 +46,44 @@ class tensor_index:  ## for now only planar, make more efficient
     def from_go(cls, go, *args, **kwargs):
         ret = cls(go._ndims, repeat = go.repeat, side = go._side)
         ret._n, ret._l = len(go.ndims), np.prod(go.ndims)
-        ret._indices = np.arange(np.array(go.ndims).prod()).reshape(go.ndims)  ## instantiate with range(N)
-        ret._bnames = bnames[:len(go._ndims)]
+        ret._indices = np.asarray([int(i) for i in range(ret._l)], dtype=np.int)
         return ret
     
     @classmethod
     def from_parent(cls,parent,side):
-        dim = map_bnames_dim[side]
-        ndims = [parent._ndims[i] if i!= dim else 1 for i in range(len(parent._ndims))]
-        ## select dimension corresponding to side
+        #######  FUGLY, GET RID OF THIS
+        assert side in planar_sides
+        if parent._side in ['left', 'right']:
+            assert side in ['bottom', 'top']
+        elif parent._side in ['bottom', 'top']:
+            assert side in ['left', 'right']
+        #######  FUGLY, GET RID OF THIS
+        ndims = [parent._ndims[side_dict[side]]] if len(parent._ndims) == 2 else [1]  ## select dimension corresponding to side
         ret = cls(ndims, repeat = parent._repeat, side = side, fromside = parent._side)  ## instantiate
         ret._p = parent  ## set parent
+        ret._indices = parent._indices[side_indices(parent._side, side, *parent._ndims)]
         ret._l, ret._n = parent._l, parent._n - 1
-        ret._indices = parent._indices[slices[side]]
-        ret._bnames = parent._bnames
         return ret
     
     def __init__(self, ndims, repeat = 1, side = None, fromside = None):  ## adapt to dims of any size
-        assert len(ndims) < 4, 'Not yet implemented'
-        self._ndims, self._repeat = ndims.copy(), repeat
+        assert len(ndims) < 3, 'Not yet implemented'
+        self._ndims, self._repeat = ndims, repeat
         self._side = side
-        
-        
-    def __len__(self):
-        return len(self._ndims)
-    
-    
-    @property
-    def sides(self):
-        return [element for tupl in self._bnames for element in tupl]
-    
-    
-    def getslice(self,index,sl):
-        index = (slice(None),)*index+(sl,)+(slice(None),)*(len(self) - index - 1)
-        print(index)
-        return self._indices[index].flatten()
         
         
     @property
     def p(self):
-        assert self._p is not None
-        return self._p
+        return self._p if self._p is not None else self
     
     def c(self, side):
-        assert self._n > 0
-        return tensor_index.from_parent(self,side)
+        return tensor_index.from_parent(self,side) if self._n != 0 else self
     
     def __getitem__(self,side_):
-        if side_ in self.sides and self._ndims[map_bnames_dim[side_]] != 1:
-            return self.c(side_)
-        else:
-            return self._indices[side_]
+        return self.c(side_)
     
     @property
     def indices(self):
-        return np.concatenate([self._indices.flatten() + i*self._l*np.ones(np.prod(self._ndims), dtype=np.int) for i in range(self._repeat)])
+        return np.concatenate([self._indices + i*self._l*np.ones(np.prod(self._ndims), dtype=np.int) for i in range(self._repeat)])
 
 
 ###############################################################
@@ -128,7 +121,6 @@ def prolongation_matrix(p, *args):  ## MAKE THIS SPARSE
         T = T_new
     ## return T if kv_new >= kv_old else the restriction
     return T if not assert_params[0] else np.linalg.inv(T.T.dot(T)).dot(T.T)
-
 
 ### go.cons prolongation / restriction
 
