@@ -12,7 +12,7 @@ from auxilliary_classes import *
 import os, sys, pickle
 
 
-def main(nelems = [12,8], degree=3, basis_type = 'bspline', interp_degree = 5, preproc = True, multigrid = 1, repair_ordinary = False, local_repair = False, repair_dual = False, problem = 'middle', save = True, ltol = 1e-7, btol = 0.01, name = 'rotor'):
+def main(nelems = [6,40], degree=3, basis_type = 'bspline', interp_degree = 5, preproc = True, multigrid = 1, repair_ordinary = False, local_repair = False, repair_dual = False, problem = 'single_male_casing', save = True, ltol = 1e-7, btol = 0.001, name = 'rotor'):
    
     assert len(nelems) == 2
     
@@ -30,21 +30,43 @@ def main(nelems = [12,8], degree=3, basis_type = 'bspline', interp_degree = 5, p
     if problem == 'middle':
         goal_boundaries, corners = pl.middle(go)
         
-    elif problem == 'bottom':
-        go, goal_boundaries, corners = pl.bottom(go)
-        for i in range(0):
-            l = len(knots[1].knots())
+    elif problem == 'bottom':  ## THE REFINEMENT NEEDS TO BE CARRIED OUT BEFORE pl.bottom is called otherwise we get nonsense
+        ## This is prolly due to goal_boundaries being faulty or so
+        for i in range(4):
+            l = len(go.knots[1])
             go = go.ref_by([[],[l-4, l-3, l-2]])
+        go, goal_boundaries, corners = pl.bottom(go)
+        ## carrying out refinement after calling pl.bottom does work on go but then prep.boundary projection give crap
+        ## the culprit is prolly goal_boundaries
+        ## goal_boundaries then contains a non-refined go, which is probably the problem
+        
+    elif problem == 'single_female_casing':
+        for i in range(2):
+            go = go.ref_by([[0,1,2], []])
+        goal_boundaries, corners = pl.single_female_casing(go, radius = 36.030884376335685)
+        
+    elif problem == 'single_male_casing':
+        for i in range(2):
+            l = len(go.knots[0])
+            go = go.ref_by([[l-4,l-3, l-2], []])
+        goal_boundaries, corners = pl.single_male_casing(go, radius = 36.030884376335685)
             
-            
+    elif problem == 'nrw':
+        goal_boundaries, corners = pl.nrw(go)
+                   
     goal_boundaries = prep.preproc_dict(goal_boundaries)
     
     mgo = prep.boundary_projection(go, goal_boundaries, corners, btol = btol)
+    
+    mgo[-1].quick_plot_boundary()
+    
+    #goal_boundaries.plot(mgo[-1], 'contours', ref = 3)
 
     for i in range(len(mgo)):
         go_ = mgo[i] if i == 0 else mgo[i] | mgo[i-1]  ## take mg_prolongation after first iteration
         solver = Solver.Solver(go_, corners, go_.cons)   
-        initial_guess = solver.one_d_laplace() if i == 0 else go_.s
+        #initial_guess = solver.one_d_laplace() if i == 0 else go_.s
+        initial_guess = solver.transfinite_interpolation(goal_boundaries, corners) if i == 0 else go_.s
         go_.s = solver.solve(initial_guess)
         mgo[i] = go_
         

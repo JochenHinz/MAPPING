@@ -87,7 +87,8 @@ def right_angle_func(leader, follower, fixed, geom, k):
         leader = leader(reparam)
         follower = follower(fixed)
         diff = (leader - follower)/norm(leader - follower)
-        return sum([((leader+follower).grad(geom)[i,k]*diff[i])**2  for i in range(2)])
+        scale = 1/norm(leader - follower)  ## scale with the inverse of the distance to make small gaps more important
+        return sum([scale*((leader+follower).grad(geom)[i,k]*diff[i])**2  for i in range(2)])
     return lambda x: func(leader, follower, x)
 
 def action_func(func, geom, side):
@@ -106,9 +107,9 @@ def make_jac_fd(func, k, eps = 1e-5): ## k = amount of dependencies
     return jac
 
 def minimization_info(go, info):  ## info = {'method': 'method, 'degree': p}, go = ordinary_go[side]
-    domain_, geom, k, ischeme = go.domain, go.geom, side_dict[go.side], go.ischeme
-    if info['method'] == 'spline':
-        rbasis = domain_.basis('spline',degree = info['order'])
+    domain_, geom, k, ischeme = go.domain, go.geom, side_dict[go._side], go.ischeme
+    if info['method'] == 'bspline':
+        rbasis = domain_.basis('bspline', degree = info['order'], knotvalues = [go.knots[k]])
         initial = domain_.project(geom[k], onto = rbasis, geometry = geom, ischeme = gauss(ischeme))[1:-1]
         if info['order'] != 2:
             print('Warning B-spline reparameterization with p != 2 is unconstrained')
@@ -155,6 +156,7 @@ def minimize_angle(go, goal_boundaries, side, info = {'method': 'spline', 'order
     def main_func(c, integrate = False):
         arg = grid_func(expr(go,c, side, rbasis), side)
         val = right_angle_func(goal_boundaries[side], goal_boundaries[opposite], grid_func(geom[k], opposite) - pull_dict[opposite], geom, k )(arg)
+        val += action_func(arg, go.geom, side)
         if integrate:
             ret = domain_.elem_eval(val, ischeme = 'bezier1')
             print(sum(ret))

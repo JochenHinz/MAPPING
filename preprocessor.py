@@ -15,8 +15,9 @@ def vec_union(vec1, vec2):  ## return the union of two refine indices
     
 class preproc_dict:
     
-    def __init__(self, dictionary):
+    def __init__(self, dictionary, go = None):
         self._dict = dictionary
+        self._go = go
         
         
     def instantiate(self, rep_dict):
@@ -32,6 +33,13 @@ class preproc_dict:
     
     def items(self):
         return self._dict.items()
+    
+    def plot(self, go, name, ref = 1):
+        d = self.from_geom(go.geom)
+        for side in d.keys():
+            points = go.domain.boundary[side].refine(ref).elem_eval( d[side], ischeme='vtk', separate=True)
+            with plot.VTKFile(name+'_'+side) as vtu:
+                vtu.unstructuredgrid( points, npars=2 )
             
             
 def log_iter_sorted_dict_items(title, d):
@@ -63,10 +71,10 @@ def generate_cons(go, boundary_funcs, corners, btol = 1e-2):
             temp = goal + go  ## take the union
             domain_ = temp[side].domain  ## restrict to boundary
             goal = temp.basis.vector(2).dot(temp.cons | 0)  ## create mapping
-        else:
+        else:  ## differentiable curve
             domain_ = domain.boundary[side]
             ischeme_ = gauss(degree*2)
-        cons_library[side] = domain_.refine(3).project(goal, onto=basis, geometry=geom, ischeme=ischeme_, constrain=cons)
+        cons_library[side] = domain_.refine(1).project(goal, onto=basis, geometry=geom, ischeme=ischeme_, constrain=cons)
         cons |= cons_library[side]
     return cons
 
@@ -81,7 +89,9 @@ def constrained_boundary_projection(go, goal_boundaries_, corners, btol = 1e-2, 
     error_dict = {'left':0, 'right':0, 'top':0, 'bottom':0}
     for side, goal in log_iter_sorted_dict_items('boundary', goal_boundaries):
         dim = side_dict[side]
-        error = ((goal - go.bc())**2).sum(0)**0.5
+        goal_ = goal if not isinstance(goal, ut.base_grid_object) else go.bc()  
+        ## for now, if goal is a grid_object assume that go already satisfies the b.c.. Change this in the long run !
+        error = ((goal_ - go.bc())**2).sum(0)**0.5
         ## replace goal by goal.function() or something once it becomes an object
         go_ = go[side]
         if basis_type == 'spline':   ## basis is spline so operate on the elements

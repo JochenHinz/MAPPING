@@ -4,9 +4,7 @@ from nutils import *
 from auxilliary_classes import *
 import utilities as ut
 import reparam as rep
-import collections
-import os
-import sys
+import collections, re, os, sys
 import xml.etree.ElementTree as ET
 
 pathdir = os.path.dirname(os.path.realpath(__file__))
@@ -15,6 +13,12 @@ pathdir = os.path.dirname(os.path.realpath(__file__))
 ###################################################
 
 ## Tidy up ! Use as much from utilities as possible
+
+
+def rot(weights, angle_):
+    assert weights.shape[0] == 2
+    mat = np.array([[np.cos(angle_), -np.sin(angle_)], [np.sin(angle_), np.cos(angle_)]])
+    return mat.dot(weights.T).T
 
 
 def arr(thing):
@@ -30,6 +34,75 @@ def read_xml(path):
     s = np.asarray([s[2*i] for i in range(l)] + [s[2*i + 1] for i in range(l)])
     return ut.nonuniform_kv(kv), s
 
+
+def single_female_casing(go, angle = 0, radius = 38, splinify = True, dims = None):
+    xml = ET.parse(pathdir +'/xml/SRM4+6.xml').getroot()
+    female = xml[0].text.split()
+    female = np.asarray([float(i) for i in female])
+    female = np.reshape(female,[2, len(female)//2])
+    female = np.vstack([female.T, female[:,0]])
+    #female = female[np.concatenate([((female[1:]-female[:-1])**2).sum(1) > 8.0*1e-5, [True]])]
+    female = np.delete(female,[1, 642, 643, 644, 1285, 1286, 1287, 1928, 1929, 1930],0)
+    print(female.shape)
+    steps = female.shape[0]
+    absc = np.linspace(0,2*np.pi, steps)
+    casing = (radius*np.vstack([np.cos(absc), np.sin(absc)])).T
+    if dims is not None:
+        female, casing = female[dims[0]: dims[1], :], casing[dims[0]: dims[1], :]
+    corners = {(0,0): (female[0,0],female[0,1]), (1,0): (casing[0,0],casing[0,1]), (0,1): (female[0,0],female[0,1]), (1,1): (casing[-1,0],casing[-1,1])}
+    leftverts, rightverts = [rep.reparam.reparam('length', 'discrete',[item]) for item in [female, casing]]
+    goal_boundaries = dict(
+            bottom = lambda g: corners[0,0]*(1-g[0]) + corners[1,0]*g[0],
+            top = lambda g: corners[0,1]*(1-g[0]) + corners[1,1]*g[0],
+        )
+    if splinify:
+            goal_boundaries.update(
+                left = lambda g: ut.interpolated_univariate_spline(leftverts, female, g[1]),
+                right = lambda g: ut.interpolated_univariate_spline(rightverts, casing, g[1]),
+            )
+    else:
+            goal_boundaries.update(
+                left = Pointset(leftverts[1:-1], female[1:-1]),
+                bottom = Pointset(rightverts[1:-1], casing[1:-1]),
+            )
+    return goal_boundaries, corners
+
+
+def single_male_casing(go, angle = 0, radius = 38, splinify = True, dims = None):
+    xml = ET.parse(pathdir +'/xml/SRM4+6.xml').getroot()
+    male = xml[1].text.split()
+    male = np.asarray([float(i) for i in male])
+    male = np.reshape(male,[2, len(male)//2])
+    delentries = [37,38,39, 40, 419, 420, 421, 422, 801, 802, 803, 804, 1183, 1184, 1185, 1186, 1565, 1566, 1567, 1568, 1947, 1948, 1949, 1950]
+    male = np.delete(male,delentries,1)
+    male = np.vstack([male.T, male[:,0]])[::-1]
+    print(male.shape)
+    steps = male.shape[0]
+    offset = - np.pi/10.1
+    absc = np.linspace(offset,2*np.pi + offset, steps)
+    casing = (radius*np.vstack([np.cos(absc), np.sin(absc)])).T + np.asarray([56.52, 0.])[None,:]
+    casing = casing[::-1]
+    if dims is not None:
+        male, casing = male[dims[0]: dims[1], :], fecasing[dims[0]: dims[1], :]
+    corners = {(1,0): (male[0,0],male[0,1]), (0,0): (casing[0,0],casing[0,1]), (1,1): (male[0,0],male[0,1]), (0,1): (casing[-1,0],casing[-1,1])}
+    rightverts, leftverts = [rep.reparam.reparam('length', 'discrete',[item]) for item in [male, casing]]
+    goal_boundaries = dict(
+            bottom = lambda g: corners[0,0]*(1-g[0]) + corners[1,0]*g[0],
+            top = lambda g: corners[0,1]*(1-g[0]) + corners[1,1]*g[0],
+        )
+    if splinify:
+            goal_boundaries.update(
+                left = lambda g: ut.interpolated_univariate_spline(leftverts, casing, g[1]),
+                right = lambda g: ut.interpolated_univariate_spline(rightverts, male, g[1]),
+            )
+    else:
+            goal_boundaries.update(
+                left = Pointset(leftverts[1:-1], casing[1:-1]),
+                bottom = Pointset(rightverts[1:-1], male[1:-1]),
+            )
+    return goal_boundaries, corners
+    
+
 def middle(go, reparam = 'Joost', splinify = True): #Return either a spline or point-cloud representation of the screw-machine with casing problem
     pathdir = os.path.dirname(os.path.realpath(__file__))
     #ref_geom = go.geom
@@ -41,7 +114,6 @@ def middle(go, reparam = 'Joost', splinify = True): #Return either a spline or p
     bot = np.stack([np.loadtxt(pathdir+'/xml/t1_row_{}'.format(i)) for i in range(1, 3)]).T
     bot = bot[numpy.concatenate([((bot[1:]-bot[:-1])**2).sum(1) > 1.5*1e-4, [True]])]
     bot = bot[430:1390][::-1]
-    print(type(bot), 'bot')
     if True: # fix
         if reparam == 'standard' or reparam == 'length':
             top_verts, bot_verts = [rep.reparam.reparam(reparam, 'discrete',[item]) for item in [top, bot]] ## for now only upper and lower
@@ -83,14 +155,11 @@ def bottom(go):  ## make shorter, compacter, more elegant
     p1, p2 = [np.array([p_[0], 35]) for p_ in [p4,p3]]
     corners = {(0,0): p1, (1,0): p2, (0,1): p4, (1,1): p3}
     knots_xi, c = read_xml(pathdir + '/xml/motor_grid_bspline_3_278_13_bot_curve.xml')
-    kv = knots_xi*go.knots[1]
-    go = ut.make_go('bspline', go.degree, knots = kv)
-    go.set_basis()
-    go.cons = util.NanVec(2*len(go.basis))
-    go.cons[side_indices(*go.ndims)['top']] |= c
+    kv = knots_xi*go._knots[1]
+    go = ut.tensor_grid_object(go.degree, knots = kv)
+    go.set_side('top', cons = c)
     goal_boundaries = dict()
     goal_boundaries.update(bottom = lambda g: arr(p1)*(1 - g[0]) + arr(p2)*g[0], right = lambda g: arr(p2)*(1 - g[1]) + arr(p3)*g[1])
-    print(len(go.domain.boundary['top'].basis('bspline', degree = go.degree, knotvalues = [go.knots.knots()[0]])), len(c))
     goal_boundaries.update(top = go, left = lambda g: arr(p1)*(1 - g[1]) + arr(p4)*g[1])
     return go, goal_boundaries, corners
     

@@ -179,9 +179,10 @@ class Solver(object):
         return lhs
     
     
-    def transfinite_interpolation(self, curves_library, corners):    ## NEEDS FIXING
+    def transfinite_interpolation(self, curves_library_, corners):    ## NEEDS FIXING
         go = self.go
         geom = go.geom
+        curves_library = curves_library_.from_geom(geom)
         for item in curves_library:
             if isinstance(curves_library[item], Pointset):
                 pnts = curves_library[item]
