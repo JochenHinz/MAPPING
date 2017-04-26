@@ -4,6 +4,7 @@ import numpy as np
 import scipy as sp
 from problem_library import Pointset
 from auxilliary_classes import *
+from preprocessor import preproc_dict
 
 class Solver_info(object):
     def __init__(self, geom, domain, basis, ischeme, hom_index = None):
@@ -179,10 +180,10 @@ class Solver(object):
         return lhs
     
     
-    def transfinite_interpolation(self, curves_library_, corners):    ## NEEDS FIXING
+    def transfinite_interpolation(self, curves_library_, corners, rep_dict = None):    ## NEEDS FIXING
         go = self.go
         geom = go.geom
-        curves_library = curves_library_.from_geom(geom)
+        curves_library = preproc_dict(curves_library_, go).instantiate(rep_dict)
         for item in curves_library:
             if isinstance(curves_library[item], Pointset):
                 pnts = curves_library[item]
@@ -192,7 +193,7 @@ class Solver(object):
         expression += (1 - geom[0])*curves_library['left'] + geom[0]*curves_library['right']
         expression += -(1 - geom[0])*(1 - geom[1])*np.array(corners[(0,0)]) - geom[0]*geom[1]*np.array(corners[(1,1)])
         expression += -geom[0]*(1 - geom[1])*np.array(corners[(1,0)]) - (1 - geom[0])*geom[1]*np.array(corners[(0,1)])
-        return go.domain.project(expression, onto=basis, geometry=geom, ischeme=gauss(go.ischeme))
+        return go.domain.project(expression, onto=basis, geometry=geom, ischeme=gauss(go.ischeme), constraints = go.cons)
             
               
     def main_function(self,c, russian = True):

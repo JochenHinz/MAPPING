@@ -1,0 +1,25 @@
+class interpolated_univariate_spline(function.Array): ## Need to figure out what this exactly does
+    
+    @classmethod
+    def from_parent(cls,parent):
+        ret = cls(np.array(range(6)), np.zeros([2,6]).T, parent._position)
+        ## this is a dummy instantiation !
+        ret._splines = tuple(spline.derivative() for spline in parent._splines)
+        return ret
+
+    def __init__(self, vertices, values, position):
+        assert function.isarray(position)
+        assert values.shape[:1] == vertices.shape
+        self._position = position
+        function.Array.__init__(self, args=[position], shape=position.shape+values.shape[1:], dtype=function._jointdtype(vertices.dtype, float))
+        self._values_shape = values.shape[1:]
+        self._splines = tuple(scipy.interpolate.InterpolatedUnivariateSpline(vertices, v) for v in values.reshape(values.shape[0], -1).T)
+
+    def evalf(self, position):
+        assert position.ndim == self.ndim
+        shape = position.shape + self._values_shape
+        position = position.ravel()
+        return numpy.stack([spline(position) for spline in self._splines], axis=1).reshape(shape)
+    
+    def _derivative(self, var, axes, seen):
+        return interpolated_univariate_spline.from_parent(self)

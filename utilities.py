@@ -8,21 +8,55 @@ from auxilliary_classes import *
 import preprocessor as prep
 from scipy.linalg import block_diag
 
+def rotate(func, angle):
+    mat = np.array([[np.cos(angle), - np.sin(angle)],[np.sin(angle), np.cos(angle)]])
+    if isinstance(func, np.ndarray):
+        assert func.shape[0] == 2
+        return mat.dot(func)
+    else:  ## lambda-function
+        return lambda x: function.stack([mat[i,0]*func(x)[0] + mat[i,1]*func(x)[1] for i in range(2)])
+    
+def rotation_matrix(angle):
+    return np.array([[np.cos(angle), - np.sin(angle)],[np.sin(angle), np.cos(angle)]])
+    
+    
+def interpolated_univariate_spline(vertices, values, position):
 
-class interpolated_univariate_spline(function.Array): ## Need to figure out what this exactly does
+    assert function.isarray(position)
+    assert values.shape[:1] == vertices.shape
+    splines = tuple(scipy.interpolate.InterpolatedUnivariateSpline(vertices, v) for v in values.reshape(values.shape[0], -1).T)
+    return InterpolatedUnivariateSpline(splines, position, values.shape[1:], 0)
 
-    def __init__(self, vertices, values, position):
-        assert function.isarray(position)
-        assert values.shape[:1] == vertices.shape
-        function.Array.__init__(self, args=[position], shape=position.shape+values.shape[1:], dtype=function._jointdtype(vertices.dtype, float))
-        self._values_shape = values.shape[1:]
-        self._splines = tuple(scipy.interpolate.InterpolatedUnivariateSpline(vertices, v) for v in values.reshape(values.shape[0], -1).T)
+
+class InterpolatedUnivariateSpline(function.Array):
+
+    def __init__(self, splines, position, values_shape, nderivs):
+        self._splines = splines
+        self._position = position
+        self._values_shape = values_shape
+        self._nderivs = nderivs
+        self._angle = 0
+        super().__init__(args=[position], shape=position.shape+values_shape, dtype=float)
 
     def evalf(self, position):
         assert position.ndim == self.ndim
         shape = position.shape + self._values_shape
         position = position.ravel()
-        return numpy.stack([spline(position) for spline in self._splines], axis=1).reshape(shape)
+        return numpy.stack([spline(position, nu=self._nderivs) for spline in self._splines], axis=1).reshape(shape)
+
+    def _derivative(self, var, axes, seen):
+        return \
+            InterpolatedUnivariateSpline(self._splines, self._position, self._values_shape, self._nderivs+1)[(...,)+(None,)*len(axes)] \
+            * function.derivative(self._position[(...,)+(None,)*len(self._values_shape)], var, axes, seen)
+
+    def _edit(self, op):
+        return InterpolatedUnivariateSpline(self._splines, function.edit(self._position, op), self._values_shape, self._nderivs)
+    
+    def _rotate(self, angle):
+        mat = rotation_matrix(angle)
+        dummy = self.evalf
+        self._angle += angle
+        self.evalf = lambda x: mat.dot(dummy(x).T).T
     
 
     
@@ -125,7 +159,7 @@ class tensor_kv_:  ## several knot_vectors
     
     ###################################################################
     
-    ## Overall, in the long run, I'd like to allow for knot-repetitions
+    ## Overall, in the long run, I'd like to allow for knot-repetitionsf
     
     ###################################################################
     
@@ -222,7 +256,7 @@ class tensor_kv( numpy.ndarray ):
         if len(self) != len(other):  ## dimensionality does not match: return False
             return False
         elif len(self) == 1:
-            return self._kvs[0] <= other._kvs[0]  ## if len(_kvs) == 1, we access _kvs[0] directly and compare
+            return self[0] <= other[0]  ## if len(_kvs) == 1, we access _kvs[0] directly and compare
         else:
             ## if len(self) != 1, call __le__ len(self) times with len(item) == 1 tensor_kv's
             return all([self[i] <= other[i] for i in range(len(self))])
@@ -246,8 +280,8 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
     domain = None
     geom = None
     degree = None
-    sides = None
-    ndims = None
+    _sides = None
+    _ndims = None
         
     def update_from_domain(self, domain_, new_knots = None, ref_basis = False):
         go_ = copy.deepcopy(self)
@@ -298,6 +332,10 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
     @property
     def knots(self):
         return self._knots.knots()
+    
+    @property
+    def sides(self):
+        return self._sides
 
     
     def _update(self,**kwargs):
@@ -314,9 +352,10 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         pass
 
         
-    def make_cons(self, goal_boundaries, corners, rep_dict = None, **kwargs):
+    def make_cons(self, goal_boundaries_, corners, rep_dict = None, **kwargs):
         assert self.basis is not None
-        funcs = goal_boundaries.instantiate(rep_dict) if rep_dict is not None else goal_boundaries.from_geom(self.geom)
+        goal_boundaries = prep.preproc_dict(goal_boundaries_, self)
+        funcs = goal_boundaries.instantiate(rep_dict) if rep_dict is not None else goal_boundaries.from_geom()
         cons = prep.generate_cons(self, funcs, corners, **kwargs)
         return cons
     
@@ -682,7 +721,9 @@ class tensor_grid_object(base_grid_object):
             ret.s = np.asarray(ret.cons | transmitter.prolong_weights(ret, c= False)[0])
         if constrain_corners: ## we make sure that the resulting geometry still satisfies s(0,0) = p0, s(1,0) = p1, ...
             if len(ret) == 1:  ## for 1D not yet implemented
-                pass
+                for side in transmitter.sides:
+                    temp = receiver.get_side(side)
+                    ret.set_side(side, s = temp, cons = temp)
             elif len(ret) == 2:
                 toindex = ret.get_corner_indices()
                 fromindex = receiver.get_corner_indices()

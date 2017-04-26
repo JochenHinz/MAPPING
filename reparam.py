@@ -88,6 +88,7 @@ def right_angle_func(leader, follower, fixed, geom, k):
         follower = follower(fixed)
         diff = (leader - follower)/norm(leader - follower)
         scale = 1/norm(leader - follower)  ## scale with the inverse of the distance to make small gaps more important
+        ## in the log run make sure only the part orthogonal to the curve plays a role
         return sum([scale*((leader+follower).grad(geom)[i,k]*diff[i])**2  for i in range(2)])
     return lambda x: func(leader, follower, x)
 

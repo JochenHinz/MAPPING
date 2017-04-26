@@ -12,7 +12,7 @@ from auxilliary_classes import *
 import os, sys, pickle
 
 
-def main(nelems = [6,40], degree=3, basis_type = 'bspline', interp_degree = 5, preproc = True, multigrid = 1, repair_ordinary = False, local_repair = False, repair_dual = False, problem = 'single_male_casing', save = True, ltol = 1e-7, btol = 0.001, name = 'rotor'):
+def main(nelems = [10,10], degree=3, basis_type = 'bspline', interp_degree = 5, preproc = True, multigrid = 1, repair_ordinary = False, local_repair = False, repair_dual = False, problem = 'nrw', save = True, ltol = 1e-7, btol = 0.01, name = 'rotor'):
    
     assert len(nelems) == 2
     
@@ -54,16 +54,20 @@ def main(nelems = [6,40], degree=3, basis_type = 'bspline', interp_degree = 5, p
     elif problem == 'nrw':
         goal_boundaries, corners = pl.nrw(go)
                    
-    goal_boundaries = prep.preproc_dict(goal_boundaries)
+    #goal_boundaries = prep.preproc_dict(goal_boundaries)
     
     mgo = prep.boundary_projection(go, goal_boundaries, corners, btol = btol)
     
     mgo[-1].quick_plot_boundary()
-    
     #goal_boundaries.plot(mgo[-1], 'contours', ref = 3)
-
-    for i in range(len(mgo)):
-        go_ = mgo[i] if i == 0 else mgo[i] | mgo[i-1]  ## take mg_prolongation after first iteration
+    start = 0
+    for i in range(start,len(mgo)):
+        go_ = mgo[i] if i == start else mgo[i] | mgo[i-1]  ## take mg_prolongation after first iteration
+        if i > len(mgo) - 3:
+            for j in range(4):
+                l1, l2 = len(go_.knots[0]), len(go_.knots[1])
+                go_ = go_.ref_by([[0,1,2,l1-4,l1-3, l1-2], [0,1,2,l2-4,l2-3, l2-2]])
+                print(go_.s)
         solver = Solver.Solver(go_, corners, go_.cons)   
         #initial_guess = solver.one_d_laplace() if i == 0 else go_.s
         initial_guess = solver.transfinite_interpolation(goal_boundaries, corners) if i == 0 else go_.s

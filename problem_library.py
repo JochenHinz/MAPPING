@@ -43,11 +43,10 @@ def single_female_casing(go, angle = 0, radius = 38, splinify = True, dims = Non
     female = np.vstack([female.T, female[:,0]])
     #female = female[np.concatenate([((female[1:]-female[:-1])**2).sum(1) > 8.0*1e-5, [True]])]
     female = np.delete(female,[1, 642, 643, 644, 1285, 1286, 1287, 1928, 1929, 1930],0)
-    print(female.shape)
     steps = female.shape[0]
     absc = np.linspace(0,2*np.pi, steps)
     casing = (radius*np.vstack([np.cos(absc), np.sin(absc)])).T
-    if dims is not None:
+    if dims is not None: ## take the full thing
         female, casing = female[dims[0]: dims[1], :], casing[dims[0]: dims[1], :]
     corners = {(0,0): (female[0,0],female[0,1]), (1,0): (casing[0,0],casing[0,1]), (0,1): (female[0,0],female[0,1]), (1,1): (casing[-1,0],casing[-1,1])}
     leftverts, rightverts = [rep.reparam.reparam('length', 'discrete',[item]) for item in [female, casing]]
@@ -162,4 +161,28 @@ def bottom(go):  ## make shorter, compacter, more elegant
     goal_boundaries.update(bottom = lambda g: arr(p1)*(1 - g[0]) + arr(p2)*g[0], right = lambda g: arr(p2)*(1 - g[1]) + arr(p3)*g[1])
     goal_boundaries.update(top = go, left = lambda g: arr(p1)*(1 - g[1]) + arr(p4)*g[1])
     return go, goal_boundaries, corners
+
+def nrw(go, stepsize = 1):
+    with open (pathdir + '/nrw.txt', "r") as nrw:
+        data=nrw.readlines()
+    data = str(data)
+    vec = re.findall(r'[+-]?[0-9.]+', data[0:])
+    vec = np.array([float(i) for i in vec])[::stepsize]
+    l = np.nonzero(vec)[0]
+    vec = vec[l]
+    vec_ = np.reshape(vec,[len(vec)//2, 2]).T
+    stepsize = vec_.shape[1]//4
+    vec_0, vec_1, vec_2, vec_3 = vec_[:,0:stepsize].T, vec_[:,stepsize:2*stepsize - 3].T, vec_[:,2*stepsize-3:3*stepsize-5].T[::-1,:], vec_[:,3*stepsize-5:].T[::-1,:]
+    verts_0, verts_1, verts_2, verts_3 = [rep.reparam.reparam('length', 'discrete',[item]) for item in [vec_0, vec_1, vec_2, vec_3]]
+    #verts_2, verts_3 = [np.array(list(reversed(verts))) for verts in [verts_2, verts_3]]
+    goal_boundaries = dict()
+    goal_boundaries.update(
+                top = lambda g: ut.interpolated_univariate_spline(verts_1, vec_1, g[0]),
+                bottom = lambda g: ut.interpolated_univariate_spline(verts_3, vec_3, g[0]),
+                left = lambda g: ut.interpolated_univariate_spline(verts_0, vec_0, g[1]),
+                right = lambda g: ut.interpolated_univariate_spline(verts_2, vec_2, g[1]),
+            )
+    corners = {(0,0): (vec_0[0,0],vec_0[0,1]), (1,0): (vec_3[-1,0],vec_3[-1,1]), (0,1): (vec_1[0,0],vec_1[0,1]), (1,1): (vec_1[-1,0],vec_1[-1,1])}
+    return goal_boundaries, corners
+    
     

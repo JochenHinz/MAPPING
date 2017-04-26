@@ -15,20 +15,32 @@ def vec_union(vec1, vec2):  ## return the union of two refine indices
     
 class preproc_dict:
     
-    def __init__(self, dictionary, go = None):
+    def __init__(self, dictionary, go):
         self._dict = dictionary
         self._go = go
         
+    @property
+    def go(self):
+        return self._go
+        
         
     def instantiate(self, rep_dict):
+        if rep_dict is None:
+            return self.from_geom()
         ret = self._dict.copy()
         for side in self._dict:
-            if all([not isinstance(self._dict[side], Pointset), not isinstance(self._dict[side], ut.base_grid_object)]):
-                ret[side] = ret[side](rep_dict[side])
+            if isinstance(self._dict[side], Pointset):
+                ## Pointsets should be reparameterized from the problem library
+                pass
+            elif isinstance(self._dict[side], ut.base_grid_object):
+                pass
+                ##Forthcoming
+            else:
+                ret[side] = ret[side](go.geom if rep_dict[side] is None else rep_dict[side])
         return ret
         
-    def from_geom(self,geom):
-        rep_dict = {'left': geom, 'right': geom, 'bottom': geom, 'top': geom}
+    def from_geom(self):
+        rep_dict = {'left': self.go.geom, 'right': self.go.geom, 'bottom': self.go.geom, 'top': self.go.geom}
         return self.instantiate(rep_dict)
     
     def items(self):
@@ -52,7 +64,8 @@ def log_iter_sorted_dict_items(title, d):
 def generate_cons(go, boundary_funcs, corners, btol = 1e-2):
     domain, geom, basis, degree, ischeme, basis_type, knots = go.domain, go.geom, go.basis.vector(2), go.degree, go.ischeme, go.basis_type, go.knots 
     cons = None
-    for (i, j), v in log.iter('corners', corners.items()):  ## constrain the corners
+    ## constrain the corners
+    for (i, j), v in log.iter('corners', corners.items()):
         domain_ = (domain.levels[-1] if isinstance(domain, topology.HierarchicalTopology) else domain).boundary[{0: 'bottom', 1: 'top'}[j]].boundary[{0: 'left', 1: 'right'}[i]]
         cons = domain_.project(v, onto=basis, constrain=cons, geometry=geom, ischeme='vertex')
     # Project all boundaries onto `gbasis` and collect all elements where
@@ -74,14 +87,15 @@ def generate_cons(go, boundary_funcs, corners, btol = 1e-2):
         else:  ## differentiable curve
             domain_ = domain.boundary[side]
             ischeme_ = gauss(degree*2)
-        cons_library[side] = domain_.refine(1).project(goal, onto=basis, geometry=geom, ischeme=ischeme_, constrain=cons)
+        cons_library[side] = domain_.refine(2).project(goal, onto=basis, geometry=geom, ischeme=ischeme_, constrain=cons)
         cons |= cons_library[side]
     return cons
 
 
 def constrained_boundary_projection(go, goal_boundaries_, corners, btol = 1e-2, rep_dict = None, ref = 0):  #Needs some fixing
     degree, ischeme, basis_type = go.degree, go.ischeme, go.basis_type
-    goal_boundaries = goal_boundaries_.from_geom(go.geom) if not rep_dict else goal_boundaries_.instantiate(rep_dict)
+    goal_boundaries = preproc_dict(goal_boundaries_, go)
+    goal_boundaries = goal_boundaries.from_geom() if not rep_dict else goal_boundaries.instantiate(rep_dict)
     if basis_type == 'bspline':  ## the basis type is b_spline = > we need to refine on knots
         assert go._knots is not None
     cons = go.cons
