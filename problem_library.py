@@ -75,7 +75,6 @@ def single_male_casing(go, angle = 0, radius = 38, splinify = True, dims = None)
     delentries = [37,38,39, 40, 419, 420, 421, 422, 801, 802, 803, 804, 1183, 1184, 1185, 1186, 1565, 1566, 1567, 1568, 1947, 1948, 1949, 1950]
     male = np.delete(male,delentries,1)
     male = np.vstack([male.T, male[:,0]])[::-1]
-    print(male.shape)
     steps = male.shape[0]
     offset = - np.pi/10.1
     absc = np.linspace(offset,2*np.pi + offset, steps)

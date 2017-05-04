@@ -36,13 +36,16 @@ class InterpolatedUnivariateSpline(function.Array):
         self._values_shape = values_shape
         self._nderivs = nderivs
         self._angle = 0
+        self._mat = rotation_matrix(self._angle)
+        self._vec = np.array([0.0,0.0])
         super().__init__(args=[position], shape=position.shape+values_shape, dtype=float)
 
     def evalf(self, position):
         assert position.ndim == self.ndim
         shape = position.shape + self._values_shape
         position = position.ravel()
-        return numpy.stack([spline(position, nu=self._nderivs) for spline in self._splines], axis=1).reshape(shape)
+        ret = numpy.stack([spline(position, nu=self._nderivs) for spline in self._splines], axis=1).reshape(shape)
+        return self._mat.dot(ret.T).T + self._vec.T
 
     def _derivative(self, var, axes, seen):
         return \
@@ -53,11 +56,19 @@ class InterpolatedUnivariateSpline(function.Array):
         return InterpolatedUnivariateSpline(self._splines, function.edit(self._position, op), self._values_shape, self._nderivs)
     
     def _rotate(self, angle):
-        mat = rotation_matrix(angle)
-        dummy = self.evalf
         self._angle += angle
-        self.evalf = lambda x: mat.dot(dummy(x).T).T
-    
+        self._mat = rotation_matrix(self._angle)
+        
+    def _translate(self, coord):
+        self._vec += coord
+        
+    def _rotate_around(self, coord, angle):  ## translate first then rotate
+        self._translate(-coord)
+        self._rotate(angle)
+        self._translate(coord)
+        
+        
+        
 
     
 #########################################

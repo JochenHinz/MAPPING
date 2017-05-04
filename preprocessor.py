@@ -144,12 +144,10 @@ def constrained_boundary_projection(go, goal_boundaries_, corners, btol = 1e-2, 
 
 def boundary_projection(go, goal_boundaries, corners, btol = 1e-2, rep_dict = None):
     basis_type = go.basis_type
-    print(goal_boundaries)
     go.set_cons(goal_boundaries,corners, rep_dict = rep_dict)
     go_list = [go]
     for bndrefine in log.count('boundary projection'):
         proj = constrained_boundary_projection(go_list[-1], goal_boundaries, corners, btol = btol, rep_dict = rep_dict)
-        print(proj)
         if proj is None:
             break
         else:
