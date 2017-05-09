@@ -6,39 +6,6 @@ from problem_library import Pointset
 from auxilliary_classes import *
 from preprocessor import preproc_dict
 
-class Solver_info(object):
-    def __init__(self, geom, domain, basis, ischeme, hom_index = None):
-        if hom_index is None:
-            bnd_int = domain.boundary.integrate(basis, geometry = geom, ischeme = ischeme)
-            hom_index = np.where(np.abs(bnd_int) < 0.0001)[0]
-        self.geom, self.domain, self.basis, self.ischeme, self.hom_index = geom, domain, basis, ischeme, hom_index
-    
-
-def boundary_projection(proj_info, curves, ref = 0):    #For now slow and not versatile enough
-    sides = ['bottom', 'right', 'top', 'left']
-    cons_x, cons_y = [n.util.NanVec(len(proj_info.basis))]*2
-    for i in self.sides:
-        cons_x |= domain.refine(ref).boundary[i].project(
-                curves[i][0], onto = proj_info.basis, geometry = proj_info.geom, ischeme = proj_info.ischeme ) 
-        cons_y |= domain.refine(ref).boundary[i].project(
-                curves[i][1], onto = proj_info.basis, geometry = proj_info.geom, ischeme = proj_info.ischeme )
-        vec_x, vec_y = [np.zeros(len(basis))]*2
-    for i in list(set(range(len(basis))) - set(proj_info.hom_index)):
-        vec_x[i] = cons_x[i]
-        vec_y[i] = cons_y[i]
-    return [vec_x, vec_y]
-
-
-def BC_Transfinite_Interpolation(BC_info, input_curves, pols, P):
-    sides = ['bottom', 'right', 'top', 'left']
-    topo_dict = {'bottom':[1,0], 'right': [0,1], 'top':[1,0], 'left':[0,1]}
-    for i in self.sides:
-        arg = pols[i](BC_info.geom.dot(topo_dict[i])) if i in pols else BC_info.geom.dot(topo_dict[i])
-        curves[i] = n.function.stack([ut.nutils_function(input_curves[i][j])(arg) for j in range(2)])
-    vec_x, vec_y = boundary_projection(BC_info, input_curves)
-    
-
-
 class Solver(object):
     
     
@@ -46,87 +13,13 @@ class Solver(object):
     sides = ['bottom', 'right', 'top', 'left']
     topo_dict = {'bottom':[1,0], 'right': [0,1], 'top':[1,0], 'left':[0,1]}
     dual_basis = 0
-    line_search_always = False
-    prev_dirichlet_ext_x = 0
-    prev_dirichlet_ext_y = 0
-    prev_x = [0,0]
-    jac_basis = 0
     mass = None
-    mass_hom = None
-    
-    
-  
-    def vec_maker(self,c):
-        l = len(self.basis_hom)
-        a = self.dirichlet_vec[0]
-        a[self.hom_index] = c[0:l]
-        b = self.dirichlet_vec[1]
-        b[self.hom_index] = c[l:2*l]
-        return numpy.concatenate((a,b))
-    
-    
-        
-    def std_int(self, func, ref = 0):
-        go = self.go
-        return go.domain.refine(ref).integrate(func, geometry = go.geom, ischeme = gauss(go.ischeme))
-    
-    
-    
-    def make_basis_hom(self, basis, domain = None, ret_index_set = True):
-        if domain is None:
-            domain = self.domain
-        index_set = np.where(np.abs(self.std_int(basis, domain = domain.boundary) < 0.0001)[0]) 
-        ret = basis[index_set]
-        if not ret_index_set:
-            return ret
-        else:
-            return [ret, index_set]
-        
-        
-  
-    def make_gradients(self, basis):
-        grad = basis.grad(self.geom,ndims = 2)
-        return [grad, grad.grad(self.geom, ndims = 2)]
-    
-    
-    def projection(self, func, mass = None):
-        if mass is None:
-            if not self.mass is None:
-                mass = self.mass
-            else:
-                mass, self.mass = [self.std_int(n.function.outer(self.basis)).toscipy()]*2
-        rhs = self.std_int(self.basis*func)
-        return mass.solve(rhs)[0]
-    
-    
-    
-    def constrained_projection(self, func, constraint = 0, mass = None):
-        if mass is None:
-            if not self.mass_hom is None:
-                mass = self.mass_hom
-            else:
-                mass, self.mass_hom = [self.std_int(n.function.outer(self.basis_hom)).toscipy()]*2
-        rhs = self.std_int(self.basis_hom*(func - constraint))
-        return mass.solve(rhs)[0]
-        
-    
-    
-    
-    def set_basis_hom(self, basis, ret = False):
-        basis_hom_0, self.hom_index = self.make_basis_hom(basis = basis)
-        basis_lst = [basis_hom_0].extend(self.make_gradients(basis_hom_0))
-        self.basis_hom = basis_lst
-        if ret:
-            return basis_lst
-        
-    
-        
+    mass_hom = None 
         
   
     def __init__(   
                     self, 
                     grid_object,             # [geom, domain, basis, ischeme,...]
-                    corners,                       # [P0, P1, P2, P3]
                     cons,           # must be compatible with domain
                     dirichlet_ext_vec = None,# If None, dirichlet_ext is projected onto basis
                     initial_guess = None,    # initial guess such that the initial geometry = \
@@ -138,10 +31,7 @@ class Solver(object):
                     curves = None
                                                  ):
         
-        
-        #self.domain, self.geom, self.basis, self.ischeme, self.degree = grid_object.domain, grid_object.geom, grid_object.basis, grid_object.ischeme, grid_object.degree
         self.go = grid_object
-        self.corners = corners
         self.cons = cons     
                 
         if mass_hom is not None:
@@ -171,13 +61,20 @@ class Solver(object):
         return lhs[1:] if len(lhs) > 0 else 0
             
             
-    def one_d_laplace(self, ltol = 1e-7):
+    def one_d_laplace(self, direction, ltol = 1e-7):  ## 0:xi, 1:eta
         go = self.go
         gbasis = go.basis.vector(2)
         target = function.DerivativeTarget([len(go.basis.vector(2))])
-        res = model.Integral(gbasis['ik,1']*gbasis.dot(target)['k,1'], domain=go.domain, geometry=go.geom, degree=go.degree*3)
+        res = model.Integral(gbasis['ik,' + str(direction)]*gbasis.dot(target)['k,' + str(direction)], domain=go.domain, geometry=go.geom, degree=go.degree*3)
         lhs = model.newton(target, res, lhs0=self.cons | 0, freezedofs=self.cons.where).solve(ltol)
         return lhs
+    
+    
+    def linear_spring(self):
+        go = self.go
+        mat = sp.sparse.csr_matrix(sp.sparse.block_diag([sp.sparse.diags([-1, -1, 4, -1, -1], [-go.ndims[1], -1, 0, 1, go.ndims[1]], shape=[np.prod(go.ndims)]*2)]*2))
+        mat = matrix.ScipyMatrix(mat)
+        return mat.solve(constrain = go.cons)
     
     
     def transfinite_interpolation(self, curves_library_, corners, rep_dict = None):    ## NEEDS FIXING
@@ -193,36 +90,44 @@ class Solver(object):
         expression += (1 - geom[0])*curves_library['left'] + geom[0]*curves_library['right']
         expression += -(1 - geom[0])*(1 - geom[1])*np.array(corners[(0,0)]) - geom[0]*geom[1]*np.array(corners[(1,1)])
         expression += -geom[0]*(1 - geom[1])*np.array(corners[(1,0)]) - (1 - geom[0])*geom[1]*np.array(corners[(0,1)])
-        return go.domain.project(expression, onto=basis, geometry=geom, ischeme=gauss(go.ischeme), constraints = go.cons)
+        return go.domain.project(expression, onto=basis, geometry=geom, ischeme=gauss(go.ischeme), constrain = go.cons)
             
               
-    def main_function(self,c, russian = True):
+    def Elliptic(self,c, russian = True):
         go = self.go
-        s = go.basis.vector(2).dot(c)
-        x_g, y_g = [s[i].grad(go.geom,ndims = 2) for i in range(2)]
-        x_xi, x_eta = [x_g[i] for i in range(2)]
-        y_xi, y_eta = [y_g[i] for i in range(2)]
-        g11, g12, g22 = x_xi**2 + y_xi**2, x_xi*x_eta + y_xi*y_eta, x_eta**2 + y_eta**2
+        g11, g12, g22 = self.fff(c)
+        x_xi, x_eta, y_xi, y_eta = self.func_derivs(c)
         vec1 = go.basis*(g22*x_xi.grad(go.geom,ndims = 2)[0] - 2*g12*x_xi.grad(go.geom,ndims = 2)[1] + g11*x_eta.grad(go.geom,ndims = 2)[1])
         vec2 = go.basis*(g22*y_xi.grad(go.geom,ndims = 2)[0] - 2*g12*y_xi.grad(go.geom,ndims = 2)[1] + g11*y_eta.grad(go.geom,ndims = 2)[1])
-        
         if russian:
-            return function.concatenate((vec1,vec2))/(2*g11 + 2*g22)
+            return -function.concatenate((vec1,vec2))/(2*g11 + 2*g22)
         else:
-            return function.concatenate((vec1,vec2))
+            return -function.concatenate((vec1,vec2))
         
-        
-    def g12(self, c):
+    def Liao(self,c):
+        g11, g12, g22 = self.fff(c)
+        return g11**2 + g22**2 + 2*g12**2
+    
+    def AO(self,c):
+        g11, g12, g22 = self.fff(c)
+        return g11*g22
+    
+    def func_derivs(self,c):
         go = self.go
         s = go.basis.vector(2).dot(c)
         x_g, y_g = [s[i].grad(go.geom,ndims = 2) for i in range(2)]
         x_xi, x_eta = [x_g[i] for i in range(2)]
         y_xi, y_eta = [y_g[i] for i in range(2)]
-        return x_xi*x_eta + y_xi*y_eta
+        return x_xi, x_eta, y_xi, y_eta
         
+        
+    def fff(self, c):  ## first fundamental form
+        x_xi, x_eta, y_xi, y_eta = self.func_derivs(c)
+        g11, g12, g22 = x_xi**2 + y_xi**2, x_xi*x_eta + y_xi*y_eta, x_eta**2 + y_eta**2
+        return g11, g12, g22
     
     
-    def solve(self, init = None, ltol = 1e-7, method = 'Newton', t0 = None, cons = None, bnd = False):
+    def solve(self, init = None, ltol = 1e-7, method = 'Elliptic', solutionmethod = 'Newton', t0 = None, cons = None):
         go = self.go
         basis = go.basis
         if cons is None:
@@ -230,19 +135,26 @@ class Solver(object):
         if init is None:
             init = self.cons|0
         target = function.DerivativeTarget([len(go.basis.vector(2))])
-        res = model.Integral(self.main_function(target), domain=go.domain, geometry=go.geom, degree=go.ischeme*3)
-        if bnd:
-            res += model.Integral(2*1e9*go.basis.vector(2).sum(-1)*self.g12(target)**2, domain = go.domain.boundary, geometry=go.geom, degree=go.ischeme*3)
-        if method == 'Newton':
+        if method == 'Elliptic':
+            res = model.Integral(self.Elliptic(target), domain=go.domain, geometry=go.geom, degree=go.ischeme*3)
+        elif method == 'Liao':
+            res = model.Integral(self.Liao(target), domain=go.domain, geometry=go.geom, degree=go.ischeme*3).derivative(target)
+        elif method == 'AO':
+            res = model.Integral(self.AO(target), domain=go.domain, geometry=go.geom, degree=go.ischeme*3).derivative(target)
+        elif method == 'Elliptic_partial':
+            res = model.Integral(go.basis.vector(go.repeat)['ik,l']*go.geom['k,l'], domain=go.domain, geometry=go.basis.vector(go.repeat).dot(target), degree=go.ischeme*3)
+        else:
+            raise ValueError('unknown method: ' + method)
+        if solutionmethod == 'Newton':
             lhs = model.newton(target, res, lhs0=init, freezedofs=cons.where).solve(ltol)
-        elif method == 'Pseudotime':
+        elif solutionmethod == 'Pseudotime':
             if t0 is None:
                 t0 = 0.01
             term = basis.vector(2).dot(target)
-            inert = -model.Integral(function.concatenate((basis*term[0], basis*term[1])), domain=go.domain, geometry=go.geom, degree=go.ischeme*3)
+            inert = model.Integral(function.concatenate((basis*term[0], basis*term[1])), domain=go.domain, geometry=go.geom, degree=go.ischeme*3)
             lhs = model.pseudotime(target, res, inert, t0, lhs0=init, freezedofs=cons.where).solve(ltol)
         else:
-            raise ValueError('unknown method: ' + method)
+            raise ValueError('unknown solution method: ' + solutionmethod)
         return lhs
     
     

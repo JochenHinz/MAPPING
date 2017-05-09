@@ -35,7 +35,7 @@ def read_xml(path):
     return ut.nonuniform_kv(kv), s
 
 
-def single_female_casing(go, angle = 0, radius = 38, splinify = True, dims = None):
+def single_female_casing(go, angle = 0, radius = 38, splinify = True):
     xml = ET.parse(pathdir +'/xml/SRM4+6.xml').getroot()
     female = xml[0].text.split()
     female = np.asarray([float(i) for i in female])
@@ -46,8 +46,6 @@ def single_female_casing(go, angle = 0, radius = 38, splinify = True, dims = Non
     steps = female.shape[0]
     absc = np.linspace(0,2*np.pi, steps)
     casing = (radius*np.vstack([np.cos(absc), np.sin(absc)])).T
-    if dims is not None: ## take the full thing
-        female, casing = female[dims[0]: dims[1], :], casing[dims[0]: dims[1], :]
     corners = {(0,0): (female[0,0],female[0,1]), (1,0): (casing[0,0],casing[0,1]), (0,1): (female[0,0],female[0,1]), (1,1): (casing[-1,0],casing[-1,1])}
     leftverts, rightverts = [rep.reparam.reparam('length', 'discrete',[item]) for item in [female, casing]]
     goal_boundaries = dict(
@@ -91,7 +89,7 @@ def single_male_casing(go, angle = 0, radius = 38, splinify = True, dims = None)
     if splinify:
             goal_boundaries.update(
                 left = lambda g: ut.interpolated_univariate_spline(leftverts, casing, g[1]),
-                right = lambda g: ut.interpolated_univariate_spline(rightverts, male, g[1]),
+                right = lambda g: ut.interpolated_univariate_spline(rightverts, male, g[1], center = np.array([56.52, 0.0])),
             )
     else:
             goal_boundaries.update(

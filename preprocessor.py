@@ -87,7 +87,7 @@ def generate_cons(go, boundary_funcs, corners, btol = 1e-2):
         else:  ## differentiable curve
             domain_ = domain.boundary[side]
             ischeme_ = gauss(degree*2)
-        cons_library[side] = domain_.refine(2).project(goal, onto=basis, geometry=geom, ischeme=ischeme_, constrain=cons)
+        cons_library[side] = domain_.refine(3).project(goal, onto=basis, geometry=geom, ischeme=ischeme_, constrain=cons)
         cons |= cons_library[side]
     return cons
 
@@ -145,6 +145,7 @@ def constrained_boundary_projection(go, goal_boundaries_, corners, btol = 1e-2, 
 def boundary_projection(go, goal_boundaries, corners, btol = 1e-2, rep_dict = None):
     basis_type = go.basis_type
     go.set_cons(goal_boundaries,corners, rep_dict = rep_dict)
+    #go.quick_plot_boundary()
     go_list = [go]
     for bndrefine in log.count('boundary projection'):
         proj = constrained_boundary_projection(go_list[-1], goal_boundaries, corners, btol = btol, rep_dict = rep_dict)
@@ -152,4 +153,6 @@ def boundary_projection(go, goal_boundaries, corners, btol = 1e-2, rep_dict = No
             break
         else:
             go_list.append(proj)
+            #go_list[-1].quick_plot_grid()
+            #go_list[-1].quick_plot_boundary()
     return ut.multigrid_object(go_list)

@@ -7,45 +7,43 @@ from matplotlib import pyplot
 from auxilliary_classes import *
 import preprocessor as prep
 from scipy.linalg import block_diag
-
-def rotate(func, angle):
-    mat = np.array([[np.cos(angle), - np.sin(angle)],[np.sin(angle), np.cos(angle)]])
-    if isinstance(func, np.ndarray):
-        assert func.shape[0] == 2
-        return mat.dot(func)
-    else:  ## lambda-function
-        return lambda x: function.stack([mat[i,0]*func(x)[0] + mat[i,1]*func(x)[1] for i in range(2)])
+import Solver
     
 def rotation_matrix(angle):
     return np.array([[np.cos(angle), - np.sin(angle)],[np.sin(angle), np.cos(angle)]])
     
     
-def interpolated_univariate_spline(vertices, values, position):
+def interpolated_univariate_spline(vertices, values, position, center = None):
 
     assert function.isarray(position)
     assert values.shape[:1] == vertices.shape
     splines = tuple(scipy.interpolate.InterpolatedUnivariateSpline(vertices, v) for v in values.reshape(values.shape[0], -1).T)
-    return InterpolatedUnivariateSpline(splines, position, values.shape[1:], 0)
+    return InterpolatedUnivariateSpline(splines, position, values.shape[1:], 0, center = center)
 
 
 class InterpolatedUnivariateSpline(function.Array):
 
-    def __init__(self, splines, position, values_shape, nderivs):
+    def __init__(self, splines, position, values_shape, nderivs, center = None):
         self._splines = splines
         self._position = position
         self._values_shape = values_shape
         self._nderivs = nderivs
         self._angle = 0
+        self._offset = 0
         self._mat = rotation_matrix(self._angle)
-        self._vec = np.array([0.0,0.0])
+        if center is None:
+            self._center = np.array([0.0,0.0])
+        else:
+            self._center = center
         super().__init__(args=[position], shape=position.shape+values_shape, dtype=float)
 
     def evalf(self, position):
         assert position.ndim == self.ndim
         shape = position.shape + self._values_shape
         position = position.ravel()
-        ret = numpy.stack([spline(position, nu=self._nderivs) for spline in self._splines], axis=1).reshape(shape)
-        return self._mat.dot(ret.T).T + self._vec.T
+        offset = self._offset*np.ones(position.shape)  ## xi^prime = xi + offset (mod 1)
+        ret = numpy.stack([spline((position + offset)%1, nu=self._nderivs) for spline in self._splines], axis=1).reshape(shape)
+        return self._mat.dot(ret.T).T + (np.eye(2) - self._mat).dot(self._center.T).T
 
     def _derivative(self, var, axes, seen):
         return \
@@ -57,17 +55,22 @@ class InterpolatedUnivariateSpline(function.Array):
     
     def _rotate(self, angle):
         self._angle += angle
-        self._mat = rotation_matrix(self._angle)
-        
-    def _translate(self, coord):
-        self._vec += coord
-        
-    def _rotate_around(self, coord, angle):  ## translate first then rotate
-        self._translate(-coord)
-        self._rotate(angle)
-        self._translate(coord)
+        self._mat = rotation_matrix(self._angle)  
         
         
+    def _reparam(self, initial_guess = None):  ## introduce xi^prime such that evalf(0)[1] = 0, i.e. recompute self._offset
+        if initial_guess is None:
+            initial_guess = 0
+        func = lambda t: self.evalf(np.array([t%1]))[0][1]
+        res = scipy.optimize.newton(func, x0 = initial_guess)
+        self._offset += res
+        
+    def update_geom(self, geom):
+        super().__init__(args=[geom], shape=geom.shape+self._values_shape, dtype=float)
+        return self
+        
+    def __call__(self, geom):
+        return self.update_geom(geom)
         
 
     
@@ -380,6 +383,10 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
         else:
             return self.dot(self.s)
         
+    def determinant(self):
+        _map = self.mapping()
+        return function.determinant(_map.grad(self.geom)) if len(self) > 1 else function.sqrt(_map.grad(self.geom).sum(-2))
+        
         
     @property
     def repeat(self):  ## this one gives the ratio len(s) // len(basis), make this adaptive to nD
@@ -433,6 +440,14 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
     def bc(self):
         assert len(self) > 1, 'Not yet implemented.'
         return self.dot(self.cons | 0)
+    
+    def quick_solve(self):
+        solver = Solver.Solver(self, self.cons)   
+        self.s = solver.solve(self.s, method = 'Elliptic', solutionmethod = 'Newton')
+        
+    @abc.abstractmethod
+    def detect_defects(self):
+        pass
     
     
     #########################################################################
@@ -596,9 +611,9 @@ class tensor_grid_object(base_grid_object):
     ### INITIALIZATION, MAKE SHORTER
     
                     
-    def __init__(self, p, *args, ischeme = 6, knots = None, s = None, cons = None, side = None, target_space = None):
+    def __init__(self, p, *args, ischeme = 6, knots = None, knotmultiplicities = None, s = None, cons = None, side = None, target_space = None):
         assert knots is not None, 'Keyword-argument \'knots\' needs to be provided'
-        self.degree, self.ischeme, self._knots = p, ischeme, knots.copy()
+        self.degree, self.ischeme, self._knots, self._knotmultiplicities = p, ischeme, knots.copy(), knotmultiplicities
         if len(args) == 2: ## instantiation via domain, geom
             assert args[0].ndims == 1
             self.domain, self.geom = args
@@ -683,6 +698,30 @@ class tensor_grid_object(base_grid_object):
             for side2 in ['bottom', 'top']:
                 ret = ret + list(self._indices[side1][side2].indices)
         return np.array(ret, dtype = np.int)
+    
+    
+    def quick_project(self, funcs):
+        assert len(self) == 2, 'Not yet implemented'
+        basis = self.basis
+        try:
+            l = len(funcs)
+        except:
+            l = False
+        integr = basis*funcs if not l else [basis*i for i in funcs]
+        rhs = self.integrate(integr)
+        mass = sp.sparse.kron(*[self[side].integrate(function.outer(self[side].basis)).toscipy() for side in ['bottom', 'left']])
+        return sp.sparse.linalg.cg(mass, rhs)[0] if not l else [sp.sparse.linalg.cg(mass, i)[0] for i in rhs]
+        
+    
+    def quick_projection(self, funcs):
+        try:
+            l = len(funcs)
+        except:
+            l = False
+        rhs = self.quick_project(funcs)
+        return self.basis.dot(rhs) if not l else [self.basis.dot(rhs[i]) for i in range(l)]
+        
+        
         
         
     ###################################################
@@ -758,9 +797,9 @@ class tensor_grid_object(base_grid_object):
         if degree is None:
             degree = self.degree
         if vector is None:
-            return self.domain.basis('bspline', degree = degree, knotvalues = self.knots)  ## make case distinction nicer
+            return self.domain.basis('bspline', degree = degree, knotvalues = self.knots, knotmultiplicities = self._knotmultiplicities)  ## make case distinction nicer
         else:
-            return self.domain.basis('bspline', degree = degree, knotvalues = self.knots).vector(vector)
+            return self.domain.basis('bspline', degree = degree, knotvalues = self.knots, knotmultiplicities = self._knotmultiplicities).vector(vector)
          
     def ref_by(self, args, prolong_mapping = True, prolong_constraint = True):  ## args = [ref_index_1, ref_index2]
         assert len(args) == len(self.knots)
@@ -795,6 +834,10 @@ class tensor_grid_object(base_grid_object):
     
     def __getitem__(self,side):
         return self.c(side)
+    
+    
+    def detect_defects(self):
+        return make_jac_basis(self)
     
     
     
@@ -1115,8 +1158,8 @@ def make_jac_basis(go,ref = 0):  ## make a B-spline basis of order 2p - 1 with p
     assert go.knots is not None
     domain, geom, knots, p  = go.domain, go.geom, go.knots, go.degree
     assert isinstance(domain, topology.StructuredTopology)
-    km = [[2*p] + [p + 1]*(len(knots[i].knots) - 2) + [2*p] for i in range(len(knots))]
-    knots_jac = [list(itertools.chain.from_iterable([[knots[i].knots[j]]*km[i][j] for j in range(len(km[i]))])) for i in range(len(km))] # make the knot_vector with repeated knots
+    km = [[2*p] + [p + 1]*(len(knots[i]) - 2) + [2*p] for i in range(len(knots))]
+    knots_jac = [list(itertools.chain.from_iterable([[knots[i][j]]*km[i][j] for j in range(len(km[i]))])) for i in range(len(km))] # make the knot_vector with repeated knots
     return domain.basis_bspline(2*p - 1, knotmultiplicities = km), knots_jac
 
 
