@@ -127,7 +127,7 @@ class Solver(object):
         return g11, g12, g22
     
     
-    def solve(self, init = None, ltol = 1e-7, method = 'Elliptic', solutionmethod = 'Newton', t0 = None, cons = None):
+    def solve(self, init = None, ltol = 1e-6, method = 'Elliptic', solutionmethod = 'Newton', t0 = None, cons = None):
         go = self.go
         basis = go.basis
         if cons is None:

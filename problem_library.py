@@ -42,7 +42,7 @@ def single_female_casing(go, angle = 0, radius = 38, splinify = True):
     female = np.reshape(female,[2, len(female)//2])
     female = np.vstack([female.T, female[:,0]])
     #female = female[np.concatenate([((female[1:]-female[:-1])**2).sum(1) > 8.0*1e-5, [True]])]
-    female = np.delete(female,[1, 642, 643, 644, 1285, 1286, 1287, 1928, 1929, 1930],0)
+    #female = np.delete(female,[1, 642, 643, 644, 1285, 1286, 1287, 1928, 1929, 1930],0)
     steps = female.shape[0]
     absc = np.linspace(0,2*np.pi, steps)
     casing = (radius*np.vstack([np.cos(absc), np.sin(absc)])).T

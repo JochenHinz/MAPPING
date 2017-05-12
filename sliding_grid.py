@@ -11,7 +11,7 @@ from auxilliary_classes import *
 import os, sys, pickle
 
 
-def main(nelems = [20,40], degree=3, basis_type = 'bspline', interp_degree = 5, repair_dual = False, save = False, ltol = 1e-7, btol = 4, name = 'sliding_grid_small_timestep', endtheta = 0.2, dtheta = 0.003):
+def main(nelems = [20,60], degree=3, basis_type = 'bspline', interp_degree = 5, repair_dual = False, save = True, ltol = 1e-7, btol = 5, name = 'sliding_grid_newgo', endtheta = 2*np.pi, dtheta = 0.03):
    
     assert len(nelems) == 2        
     
@@ -21,15 +21,13 @@ def main(nelems = [20,40], degree=3, basis_type = 'bspline', interp_degree = 5, 
         raise NotImplementedError
         
     elif basis_type == 'bspline':
-        knots = numpy.prod([ut.nonuniform_kv(numpy.linspace(0,1,nelems[i] + 1)) for i in range(2)])
-        go = ut.make_go(basis_type, degree, ischeme = ischeme, knots = knots)
+        knots = numpy.prod([ut.nonuniform_kv(degree, knotvalues = numpy.linspace(0,1,nelems[i] + 1)) for i in range(2)])
+        go = ut.make_go(basis_type, ischeme = ischeme, knots = knots)
         
     for i in range(2):
         go = go.ref_by([[0,1,2], []])
-        goal_boundaries, corners = pl.single_female_casing(go, radius = 36.030884376335685)
-        
-    mgo = prep.boundary_projection(go, goal_boundaries, corners, btol = btol)
-    
+        goal_boundaries, corners = pl.single_female_casing(go, radius = 37)#36.061810867369296)
+            
     
     def rotate(go, goal_boundaries_, corners, angle, initial_guess):
         spl_ = goal_boundaries_['left'](go.geom)
@@ -44,6 +42,11 @@ def main(nelems = [20,40], degree=3, basis_type = 'bspline', interp_degree = 5, 
         )
         return goal_boundaries, corners_
     
+    
+    theta = 0
+        
+    mgo = prep.boundary_projection(go, goal_boundaries, corners, btol = btol)
+    
     def quick_plot(go, func, name, side, ref = 0):
         points = go.domain.boundary[side].refine(ref).elem_eval( func, ischeme='vtk', separate=True )
         with plot.VTKFile(name) as vtu:
@@ -53,34 +56,33 @@ def main(nelems = [20,40], degree=3, basis_type = 'bspline', interp_degree = 5, 
 
     
     ## Multigrid to get started at theta = 0
-    start = 0
-    theta = 0
+    go_list = []
+    verts = []
     j = 0
     while j < endtheta/dtheta:
         if j == 0:
-            for i in range(start,len(mgo)):
-                go_ = mgo[i] if i == start else mgo[i] | mgo[i-1]  ## take mg_prolongation after first iteration
+            for i in range(len(mgo)):
+                go_ = mgo[i] if i == 0 else mgo[i] | mgo[i-1]  ## take mg_prolongation after first iteration
                 solver = Solver.Solver(go_, go_.cons)   
                 initial_guess = solver.transfinite_interpolation(goal_boundaries, corners) if i == 0 else go_.s
                 #initial_guess = solver.linear_spring() if i == 0 else go_.s
-                if i == 0:
-                    _go_ = copy.deepcopy(go_)
-                    _go_.s = initial_guess
-                    _go_.quick_plot()
                 go_.s = solver.solve(initial_guess, method = 'Elliptic', solutionmethod = 'Newton')
                 mgo[i] = go_  
         else:
-            goal_boundaries, corners = rotate(mgo[-1], goal_boundaries, corners, dtheta, 0)
-            go = ut.make_go(basis_type, degree, ischeme = ischeme, knots = mgo[1 if len(mgo) > 1 else 0]._knots)
+            goal_boundaries, corners = rotate(go_, goal_boundaries, corners, dtheta, 0)
+            go = ut.make_go(basis_type, ischeme = ischeme, knots = mgo[1 if len(mgo) > 1 else 0]._knots)
             mgo_ = prep.boundary_projection(go, goal_boundaries, corners, btol = btol)
-            go_ = mgo_[-1] % mgo[-1]
-            solver = Solver.Solver(go_, go_.cons)   
-            go_.s = solver.solve(go_.s, method = 'Elliptic', solutionmethod = 'Newton')
-            mgo_[-1] = go_
-            mgo = mgo_
+            go_ = mgo_[-1] % go_
+            solver = Solver.Solver(go_, go_.cons)
+            verts_, gos_ = [verts, go_list] if j <= 5 else [verts[-5:], go_list[-5:]]
+            initial_guess = go_.s if j < 3 else go_.cons | ut.tensor_grid_object.grid_interpolation(verts_,gos_)(theta)
+            go_.s = solver.solve(initial_guess, method = 'Elliptic', solutionmethod = 'Newton')
+            
+        go_list.append(go_)
+        verts.append(theta)
         
         if save:
-            output = open(sys.path[0] + '/saves/sliding_grid/' + name + '_' + basis_type +'_%i_%i.pkl' %(degree,j), 'wb')
+            output = open(sys.path[0] + '/saves/sliding_grid/' + name + '_dtheta_%.3f' %dtheta + '_degree_%i_%i.pkl' %(degree,j), 'wb')
             pickle.dump(go_, output)
             output.close()
             

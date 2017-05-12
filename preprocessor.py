@@ -86,7 +86,7 @@ def generate_cons(go, boundary_funcs, corners, btol = 1e-2):
             goal = temp.basis.vector(2).dot(temp.cons | 0)  ## create mapping
         else:  ## differentiable curve
             domain_ = domain.boundary[side]
-            ischeme_ = gauss(degree*2)
+            ischeme_ = gauss(ischeme*2)
         cons_library[side] = domain_.refine(3).project(goal, onto=basis, geometry=geom, ischeme=ischeme_, constrain=cons)
         cons |= cons_library[side]
     return cons
@@ -109,12 +109,12 @@ def constrained_boundary_projection(go, goal_boundaries_, corners, btol = 1e-2, 
         ## replace goal by goal.function() or something once it becomes an object
         go_ = go[side]
         if basis_type == 'spline':   ## basis is spline so operate on the elements
-            error_ = go_.domain.project(error, ischeme= 2*degree)
+            error_ = go_.domain.project(error, ischeme= 2*ischeme)
             refine_elems.update(
                 elem.transform.promote(domain.ndims)[0]
                 for elem in go_.domain.supp(basis_, numpy.where(error_ > btol)[0]))
         elif basis_type == 'bspline':  ## basis is b_spline just compute error per element, refinement comes later
-            basis0 = go_._basis(degree = 0)
+            basis0 = go_.domain.basis_bspline(degree = 0)
             error_ = np.divide(*go_.integrate([basis0*error, basis0]))
             print(numpy.max(error_), side)
             error_dict[side] = error_
@@ -153,6 +153,6 @@ def boundary_projection(go, goal_boundaries, corners, btol = 1e-2, rep_dict = No
             break
         else:
             go_list.append(proj)
-            #go_list[-1].quick_plot_grid()
+            go_list[-1].quick_plot_grid()
             #go_list[-1].quick_plot_boundary()
     return ut.multigrid_object(go_list)
