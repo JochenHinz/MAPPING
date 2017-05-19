@@ -44,7 +44,7 @@ class tensor_index:  ## for now only planar, make more efficient
     
     @classmethod
     def from_go(cls, go, *args, **kwargs):
-        ret = cls(go._ndims, repeat = go.repeat, side = go._side)
+        ret = cls(go.ndims, repeat = go.repeat, side = go._side)
         ret._n, ret._l = len(go.ndims), np.prod(go.ndims)
         ret._indices = np.asarray([int(i) for i in range(ret._l)], dtype=np.int)
         return ret
@@ -120,13 +120,17 @@ def prolongation_matrix(*args):  ## MAKE THIS SPARSE
                 fac2 = (kv_old[j + 1 + q] - kv_new[i + q])/(kv_old[j + q + 1] - kv_old[j + 1]) if kv_old[j + q + 1] != kv_old[j + 1] else 0
                 T_new[i,j] = fac1*T[i,j] + fac2*T[i,j + 1]
         T = T_new
+    if args[0].periodic:  ## some additional tweaking in the periodic case
+        T_ = T
+        T = T[:n-2*p,:m-2*p]
+        T[:,0:p] += T_[:n-2*p,m-2*p: m-2*p+p]
     ## return T if kv_new >= kv_old else the restriction
     return T if not assert_params[0] else np.linalg.inv(T.T.dot(T)).dot(T.T)
 
 ### go.cons prolongation / restriction
 
 def prolong_bc_go(fromgo, togo, *args, return_type = 'nan'):  ## args = [T_n, T_m , ...]
-    to_shape = np.prod(togo._ndims)
+    to_shape = np.prod(togo.ndims)
     repeat = togo.repeat
     if return_type == 'nan':
         ret = util.NanVec(repeat*to_shape)  ## create empty NanVec of appropriate size

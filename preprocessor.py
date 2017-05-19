@@ -61,13 +61,14 @@ def log_iter_sorted_dict_items(title, d):
 
             
             
-def generate_cons(go, boundary_funcs, corners, btol = 1e-2):
+def generate_cons(go, boundary_funcs, corners = None, btol = 1e-2):
     domain, geom, basis, degree, ischeme, basis_type, knots = go.domain, go.geom, go.basis.vector(2), go.degree, go.ischeme, go.basis_type, go.knots 
-    cons = None
+    cons = util.NanVec(len(go.basis)*go.repeat)
     ## constrain the corners
-    for (i, j), v in log.iter('corners', corners.items()):
-        domain_ = (domain.levels[-1] if isinstance(domain, topology.HierarchicalTopology) else domain).boundary[{0: 'bottom', 1: 'top'}[j]].boundary[{0: 'left', 1: 'right'}[i]]
-        cons = domain_.project(v, onto=basis, constrain=cons, geometry=geom, ischeme='vertex')
+    if corners:
+        for (i, j), v in log.iter('corners', corners.items()):
+            domain_ = (domain.levels[-1] if isinstance(domain, topology.HierarchicalTopology) else domain).boundary[{0: 'bottom', 1: 'top'}[j]].boundary[{0: 'left', 1: 'right'}[i]]
+            cons = domain_.project(v, onto=basis, constrain=cons, geometry=geom, ischeme='vertex')
     # Project all boundaries onto `gbasis` and collect all elements where
     # the projection error is larger than `btol` in `refine_elems`.
     cons_library = {'left':0, 'right':0, 'top':0, 'bottom':0}
@@ -114,7 +115,7 @@ def constrained_boundary_projection(go, goal_boundaries_, corners, btol = 1e-2, 
                 elem.transform.promote(domain.ndims)[0]
                 for elem in go_.domain.supp(basis_, numpy.where(error_ > btol)[0]))
         elif basis_type == 'bspline':  ## basis is b_spline just compute error per element, refinement comes later
-            basis0 = go_.domain.basis_bspline(degree = 0)
+            basis0 = go_.domain.basis_bspline(degree = 0, periodic = ())
             error_ = np.divide(*go_.integrate([basis0*error, basis0]))
             print(numpy.max(error_), side)
             error_dict[side] = error_
@@ -142,7 +143,7 @@ def constrained_boundary_projection(go, goal_boundaries_, corners, btol = 1e-2, 
 
 
 
-def boundary_projection(go, goal_boundaries, corners, btol = 1e-2, rep_dict = None):
+def boundary_projection(go, goal_boundaries, corners = None, btol = 1e-2, rep_dict = None):
     basis_type = go.basis_type
     go.set_cons(goal_boundaries,corners, rep_dict = rep_dict)
     #go.quick_plot_boundary()

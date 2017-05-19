@@ -77,7 +77,7 @@ class Solver(object):
         return mat.solve(constrain = go.cons)
     
     
-    def transfinite_interpolation(self, curves_library_, corners, rep_dict = None):    ## NEEDS FIXING
+    def transfinite_interpolation(self, curves_library_, corners = None, rep_dict = None):    ## NEEDS FIXING
         go = self.go
         geom = go.geom
         curves_library = preproc_dict(curves_library_, go).instantiate(rep_dict)
@@ -86,10 +86,12 @@ class Solver(object):
                 pnts = curves_library[item]
                 curves_library[item] = ut.interpolated_univariate_spline(pnts.verts, pnts.geom, {'left': geom[1], 'right': geom[1], 'bottom': geom[0], 'top':geom[0]}[item])
         basis = go.basis.vector(2)
-        expression = (1 - geom[1])*curves_library['bottom'] + geom[1]*curves_library['top']
-        expression += (1 - geom[0])*curves_library['left'] + geom[0]*curves_library['right']
-        expression += -(1 - geom[0])*(1 - geom[1])*np.array(corners[(0,0)]) - geom[0]*geom[1]*np.array(corners[(1,1)])
-        expression += -geom[0]*(1 - geom[1])*np.array(corners[(1,0)]) - (1 - geom[0])*geom[1]*np.array(corners[(0,1)])
+        expression = 0
+        expression += (1 - geom[1])*curves_library['bottom'] + geom[1]*curves_library['top'] if 'top' in curves_library else 0
+        expression += (1 - geom[0])*curves_library['left'] + geom[0]*curves_library['right']if 'left' in curves_library else 0
+        if corners is not None:
+            expression += -(1 - geom[0])*(1 - geom[1])*np.array(corners[(0,0)]) - geom[0]*geom[1]*np.array(corners[(1,1)])
+            expression += -geom[0]*(1 - geom[1])*np.array(corners[(1,0)]) - (1 - geom[0])*geom[1]*np.array(corners[(0,1)])
         return go.domain.project(expression, onto=basis, geometry=geom, ischeme=gauss(go.ischeme), constrain = go.cons)
             
               

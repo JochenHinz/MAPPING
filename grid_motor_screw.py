@@ -12,7 +12,7 @@ from auxilliary_classes import *
 import os, sys, pickle
 
 
-def main(nelems = [10,10], degree=3, basis_type = 'bspline', interp_degree = 5, preproc = True, multigrid = 1, repair_ordinary = False, local_repair = False, repair_dual = False, problem = 'nrw', save = False, ltol = 1e-7, btol = 0.01, name = 'rotor'):
+def main(nelems = [10,10], degree=3, basis_type = 'bspline', interp_degree = 5, preproc = True, multigrid = 1, repair_ordinary = False, local_repair = False, repair_dual = False, problem = 'middle', save = False, ltol = 1e-7, btol = 0.01, name = 'rotor'):
    
     assert len(nelems) == 2
     
@@ -24,8 +24,8 @@ def main(nelems = [10,10], degree=3, basis_type = 'bspline', interp_degree = 5, 
         go = ut.make_go(basis_type, domain, geom, degree, ischeme = ischeme, knots = knots)
         
     elif basis_type == 'bspline':
-        knots = numpy.prod([ut.nonuniform_kv(numpy.linspace(0,1,nelems[i] + 1)) for i in range(2)])
-        go = ut.make_go(basis_type, degree, ischeme = ischeme, knots = knots)
+        knots = numpy.prod([ut.nonuniform_kv(degree, knotvalues = numpy.linspace(0,1,nelems[i] + 1)) for i in range(2)])
+        go = ut.make_go(basis_type, ischeme = ischeme, knots = knots)
     
     if problem == 'middle':
         goal_boundaries, corners = pl.middle(go)
@@ -43,7 +43,7 @@ def main(nelems = [10,10], degree=3, basis_type = 'bspline', interp_degree = 5, 
     elif problem == 'single_female_casing':
         for i in range(2):
             go = go.ref_by([[0,1,2], []])
-        goal_boundaries, corners = pl.single_female_casing(go, radius = 36.030884376335685)
+        goal_boundaries, corners = pl.single_female_casing(go, radius = 37)
         
     elif problem == 'single_male_casing':
         for i in range(2):
@@ -62,13 +62,13 @@ def main(nelems = [10,10], degree=3, basis_type = 'bspline', interp_degree = 5, 
     for i in range(start,len(mgo)):
         go_ = mgo[i] if i == start else mgo[i] | mgo[i-1]  ## take mg_prolongation after first iteration
         solver = Solver.Solver(go_, go_.cons)   
-        initial_guess = solver.one_d_laplace(0) if i == 0 else go_.s
-        #initial_guess = solver.transfinite_interpolation(goal_boundaries, corners) if i == 0 else go_.s
+        #initial_guess = solver.one_d_laplace(0) if i == 0 else go_.s
+        initial_guess = solver.transfinite_interpolation(goal_boundaries, corners = corners) if i == 0 else go_.s
         go_.s = solver.solve(initial_guess, method = 'Elliptic', solutionmethod = 'Newton')
         mgo[i] = go_
         mgo[i].quick_plot()
         
-    a, b = [len(mgo[-1].knots[i]) + mgo[-1].degree - 1 for i in range(2)]
+    a, b = [len(mgo[-1].knots[i]) + mgo[-1].degree[i] - 1 for i in range(2)]
     
     if save:
         output = open(sys.path[0] + '/saves/' + name + '_' + problem + '_' + basis_type +'_%i_%i_%i.pkl' %(degree ,a, b), 'wb')

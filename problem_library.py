@@ -35,7 +35,7 @@ def read_xml(path):
     return ut.nonuniform_kv(kv), s
 
 
-def single_female_casing(go, angle = 0, radius = 38, splinify = True):
+def single_female_casing(go, angle = 0, radius = 38, splinify = True, O_grid = True):
     xml = ET.parse(pathdir +'/xml/SRM4+6.xml').getroot()
     female = xml[0].text.split()
     female = np.asarray([float(i) for i in female])
@@ -46,12 +46,17 @@ def single_female_casing(go, angle = 0, radius = 38, splinify = True):
     steps = female.shape[0]
     absc = np.linspace(0,2*np.pi, steps)
     casing = (radius*np.vstack([np.cos(absc), np.sin(absc)])).T
-    corners = {(0,0): (female[0,0],female[0,1]), (1,0): (casing[0,0],casing[0,1]), (0,1): (female[0,0],female[0,1]), (1,1): (casing[-1,0],casing[-1,1])}
+    if not O_grid:
+        corners = {(0,0): (female[0,0],female[0,1]), (1,0): (casing[0,0],casing[0,1]), (0,1): (female[0,0],female[0,1]), (1,1): (casing[-1,0],casing[-1,1])}
+    else:
+        corners = None
     leftverts, rightverts = [rep.reparam.reparam('length', 'discrete',[item]) for item in [female, casing]]
-    goal_boundaries = dict(
-            bottom = lambda g: corners[0,0]*(1-g[0]) + corners[1,0]*g[0],
-            top = lambda g: corners[0,1]*(1-g[0]) + corners[1,1]*g[0],
-        )
+    goal_boundaries = dict()
+    if not O_grid:
+        goal_boundaries.update(
+                bottom = lambda g: corners[0,0]*(1-g[0]) + corners[1,0]*g[0],
+                top = lambda g: corners[0,1]*(1-g[0]) + corners[1,1]*g[0],
+            )
     if splinify:
             goal_boundaries.update(
                 left = lambda g: ut.interpolated_univariate_spline(leftverts, female, g[1]),
