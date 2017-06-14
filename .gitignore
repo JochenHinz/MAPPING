@@ -7,5 +7,11 @@ action_minimizer.py
 collocation_1d.py
 collocation_tester.py
 main_bijective_level.py
+tensor_grid_object.py
 motorgrid.py
+knot_vector.py
+prolongation.py
 nrw.txt
+*.vtk
+*.msh
+*.

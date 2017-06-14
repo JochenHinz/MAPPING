@@ -36,7 +36,7 @@ class preproc_dict:
                 pass
                 ##Forthcoming
             else:
-                ret[side] = ret[side](go.geom if rep_dict[side] is None else rep_dict[side])
+                ret[side] = ret[side](self._go.geom if rep_dict[side] is None else rep_dict[side])
         return ret
         
     def from_geom(self):
@@ -154,6 +154,6 @@ def boundary_projection(go, goal_boundaries, corners = None, btol = 1e-2, rep_di
             break
         else:
             go_list.append(proj)
-            go_list[-1].quick_plot_grid()
-            #go_list[-1].quick_plot_boundary()
+            #go_list[-1].quick_plot_grid()
+            go_list[-1].quick_plot_boundary()
     return ut.multigrid_object(go_list)

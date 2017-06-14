@@ -13,11 +13,11 @@ def rotation_matrix(angle):
     return np.array([[np.cos(angle), - np.sin(angle)],[np.sin(angle), np.cos(angle)]])
     
     
-def interpolated_univariate_spline(vertices, values, position, center = None):
-
+def interpolated_univariate_spline(vertices, values, position, center = None, k = 1):
+    values = values.T  ## get rid of this somehow
     assert function.isarray(position)
     assert values.shape[:1] == vertices.shape
-    splines = tuple(scipy.interpolate.InterpolatedUnivariateSpline(vertices, v) for v in values.reshape(values.shape[0], -1).T)
+    splines = tuple(scipy.interpolate.InterpolatedUnivariateSpline(vertices, v, k = k) for v in values.reshape(values.shape[0], -1).T)
     return InterpolatedUnivariateSpline(splines, position, values.shape[1:], 0, center = center)
 
 
@@ -118,7 +118,7 @@ class knot_object:  #a: beginning, b: end, n: steps  ## NEEDS FIXING, NEEDS TO B
                 assert all([knotmultiplicities[0] == knotmultiplicities[-1], knotmultiplicities[-1] <= degree])
         else:
             knotmultiplicities = [1 if periodic else (degree + 1)] + [1]*(self.n - 1) + [1 if periodic else (degree + 1)]
-        self._knotmultiplicities = np.array(knotmultiplicities)
+        self._knotmultiplicities = np.array(knotmultiplicities, dtype = int)
             
     @property       
     def knots(self):
@@ -195,17 +195,34 @@ class nonuniform_kv(knot_object):
         return nonuniform_kv(self._degree, knotvalues = new_knots, knotmultiplicities = new_km, periodic = self.periodic) 
         
     def ref(self,ref = 1):
+        assert ref >= 0
         if ref == 0:
             return self
         ret = copy.deepcopy(self)
         for i in range(ref):
             ret = ret.ref_by(range(len(ret.knots) - 1))
-        return ret.ref_by(range(len(ret.knots) - 1))
+        return ret
     
     #def __add__(self, other):  ## take the union, ## FIX: WE NEED TO ROUND OFF OR WE'LL GET DUPLICATES
     #    assert isinstance(other, type(self))
     #    ret = np.asarray(sorted(set( numpy.round(list(self.knots[0]) + list(other.knots[0]),10))))
     #    return nonuniform_kv(ret)
+    
+    def add_knots(self, knotvalues):
+        assert all([ i <= 1 and i >= 0 for i in knotvalues]) and (0 not in knotvalues and 1 not in knotvalues)
+        knotvalues = [0] + list(knotvalues) + [1]
+        dummy = nonuniform_kv(self._degree, knotvalues = knotvalues, periodic = self.periodic) 
+        return self + dummy
+    
+    def raise_multiplicity(self, amount, indices = None, knotvalues = None):
+        assert any([indices is not None and knotvalues is None, indices is None and knotvalues is not None])
+        knots, new_km = self._knots, self._knotmultiplicities.copy()
+        if not indices:
+            indices = [i for i in range(len(knots)) for j in knotvalues if knots[i] == j]
+        for i in indices:
+            new_km[i] = new_km[i] + amount if (new_km[i] + amount <= self._degree + 1) else self._degree + 1
+        return nonuniform_kv(self._degree, knotvalues = knots, knotmultiplicities = new_km, periodic = self.periodic) 
+        
     
     def __add__(self, other):
         p = max(self._degree, other._degree)
@@ -217,86 +234,6 @@ class nonuniform_kv(knot_object):
         return tensor_kv(self,other)
     
 
-###########################################################################################
-
-## old version of tensor_kv, replaced by a version that inherits from np.ndarray
-    
-    
-@functools.total_ordering  
-class tensor_kv_:  ## several knot_vectors
-    
-    ###################################################################
-    
-    ## Overall, in the long run, I'd like to allow for knot-repetitionsf
-    
-    ###################################################################
-    
-    
-    _kvs = []
-    index = -1
-    
-    def __init__(self,*args):  ## *args = kv1, kv2, ...
-        self.ndims = len(args)
-        self._kvs = list(args)
-        
-    def __getitem__(self,n):  ## in __getitem__ we do not return _kvs[n] but a new tensor_kv with new._kvs = [self._kvs[n]]
-        assert n < self.ndims
-        return tensor_kv(self._kvs[n])
-    
-    def __setitem__(self,n, value):  ## in __getitem__ we do not return _kvs[n] but a new tensor_kv with new._kvs = [self._kvs[n]]
-        assert n < self.ndims
-        new_kvs = self._kvs.copy()
-        new_kvs[n] = value
-        return tensor_kv(new_kvs)
-    
-    def __len__(self):
-        return self.ndims
-    
-    @property
-    def knots(self):  ## return 
-        return [k.knots[0] for k in self._kvs]
-    
-    def __add__(self, other):  ## take the elementwise union
-        assert len(self._kvs) == len(other._kvs)
-        return tensor_kv(*[self._kvs[i] + other._kvs[i] for i in range(len(self))])
-    
-    def ref_by(self, indices):  ## element-wise, indices = [[...], [...], ...]
-        assert len(indices) == len(self)
-        return tensor_kv(*[self._kvs[i].ref_by(indices[i]) for i in range(len(self))])
-    
-    def extend_knots(self):
-        return [k.extend_knots() for k in self._kvs]
-    
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        if self.index == self.ndims - 1:
-            self.index = -1
-            raise StopIteration
-        self.index = self.index + 1
-        return self[self.index]
-    
-    def __le__(self, other):
-        if len(self) != len(other):  ## dimensionality does not match: return False
-            return False
-        elif len(self) == 1:
-            return self._kvs[0] <= other._kvs[0]  ## if len(_kvs) == 1, we access _kvs[0] directly and compare
-        else:
-            ## if len(self) != 1, call __le__ len(self) times with len(item) == 1 tensor_kv's
-            return all([self[i] <= other[i] for i in range(len(self))])
-    
-    def __mul__(self,other):
-        kvs = self._kvs
-        kvs.extend(other._kvs)
-        return tensor_kv(*kvs)
-    
-    def delete(self,index):
-        kvs = self._kvs.copy()
-        del kvs[index]
-        return tensor_kv[kvs]
-    
-    
 ###################################################################################
     
     
