@@ -1,0 +1,7 @@
+- go[side][side] ain't work
+
+- (go1[side] - go2[side]) and (go1[side] % go2[side]) ain't work - Solved, I believe
+
+- periodic O-grid ain't work - Solved, I believe
+
+- go1.replace(go2[side]) ain't work for O-grids as well as normal grids - Solved, I believe
