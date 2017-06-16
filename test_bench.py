@@ -36,7 +36,7 @@ def cube_go(ndims,p):
 
 
 def O_grid(ndims,p):
-    kv = ut.tensor_kv(*[ut.nonuniform_kv(p, knotvalues = np.linspace(0,1,n+1), periodic = (n == ndims[1])) for n in ndims])
+    kv = ut.tensor_kv([ut.nonuniform_kv(p, knotvalues = np.linspace(0,1,n+1), periodic = (n == ndims[1])) for n in ndims])
     go = ut.tensor_grid_object(knots = kv)
     def circle(R):
         return lambda g: R*function.stack([function.cos(2*np.pi*g[1]), function.sin(2*np.pi*g[1])])

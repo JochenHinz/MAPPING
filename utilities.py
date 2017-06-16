@@ -108,7 +108,7 @@ class knot_object:
             
     @property       
     def knots(self):
-        return [self._knots]  ## Possibly get rid of the surrounding []
+        return self._knots  ## Possibly get rid of the surrounding []
     
     @property
     def periodic(self):
@@ -141,7 +141,7 @@ class knot_object:
         return union, km
     
     def __le__(self, other):  ## see if one is subset of other
-        if not (set(self.knots[0]) <= set(other.knots[0]) and self._degree <= other._degree and self.periodic == other.periodic): 
+        if not (set(self.knots) <= set(other.knots) and self._degree <= other._degree and self.periodic == other.periodic): 
             ## knots no subset or self.p > other.p => return False
             return False
         else:  # check if knotmultiplicities are smaller or equal
@@ -226,8 +226,8 @@ class nonuniform_kv(knot_object):
 
 ###################################################################################
 
-
-class _tensor_kv(numpy.ndarray):
+@functools.total_ordering
+class tensor_kv(numpy.ndarray):
     def __new__(cls, data):
         return numpy.array(data).view(cls)
     
@@ -248,10 +248,7 @@ class _tensor_kv(numpy.ndarray):
     extend_knots = _vectorize('extend_knots',list)
     knots = _prop_wrapper('knots')
     periodic = _prop_wrapper('periodic',tuple)
-    dims = _prop_wrapper('dim')
-    @property
-    def ndims(self):
-        return len(self)
+    ndims = _prop_wrapper('dim')
     knotmultiplicities = _prop_wrapper('knotmultiplicities')
     ref_by = _vectorize('ref_by')
     add_knots = _vectorize('add_knots')
@@ -273,7 +270,7 @@ class _tensor_kv(numpy.ndarray):
     
     
 @functools.total_ordering     
-class tensor_kv( numpy.ndarray ):
+class _tensor_kv( numpy.ndarray ):
 
     def __new__( cls, *data ):
         return np.asarray(data).view(cls)
@@ -647,7 +644,7 @@ class tensor_grid_object(base_grid_object):
     
     @classmethod
     def from_parent(cls, parent, side):
-        knots = tensor_kv(parent._knots[side_dict[side]])
+        knots = parent._knots.at(side_dict[side])
         entries = parent.get_side(side)
         ret = cls.with_mapping(entries[0], entries[1], parent.domain.boundary[side], parent.geom, side = side, target_space = parent._target_space, knots = knots)
         ret._p = parent
@@ -1027,7 +1024,7 @@ class tensor_grid_object(base_grid_object):
         ## extend other to go[side] using a grid union in the side-direction replacing cons and s there, prolong the rest
         dim = side_dict[other._side]
         ## prolong 1D go
-        other_ = copy.deepcopy(other) + tensor_grid_object(knots = other._knots + tensor_kv(self._knots[dim]), side = other._side)
+        other_ = copy.deepcopy(other) + tensor_grid_object(knots = other._knots + self._knots.at(dim), side = other._side)
         new_knots = copy.deepcopy(self._knots)
         new_knots[dim] = other_._knots[0]  ## EXTEND knots in corresponding direction
         new_go = copy.deepcopy(self) + tensor_grid_object(knots = new_knots)
