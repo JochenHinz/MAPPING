@@ -1,6 +1,6 @@
 import numpy as np
 import scipy as sp
-import scipy.interpolate
+import scipy.interpolate, scipy.sparse
 from nutils import *
 import inspect, collections, itertools, copy, functools, abc, pickle
 from matplotlib import pyplot
@@ -8,6 +8,7 @@ from auxilliary_classes import *
 import preprocessor as prep
 from scipy.linalg import block_diag
 import Solver
+import elasticity
     
 def rotation_matrix(angle):
     return np.array([[np.cos(angle), - np.sin(angle)],[np.sin(angle), np.cos(angle)]])
@@ -108,28 +109,48 @@ class knot_object:
             
     @property       
     def knots(self):
-        return self._knots  ## Possibly get rid of the surrounding []
+        return self._knots
     
     @property
     def periodic(self):
         return self._periodic
     
     @property
-    def dim(self):
-        return np.sum(self._knotmultiplicities) - 1 if self.periodic else len(self.extend_knots()) - self._degree - 1
+    def dim(self):  ## amount of resulting basis functions, possibly change this to amount of elements
+        return np.sum(self._knotmultiplicities[:-1]) if self.periodic else len(self.extend_knots()) - self._degree - 1
     
     @property
     def knotmultiplicities(self):
         return self._knotmultiplicities
     
+    @property
+    def degree(self):
+        return self._degree    
     
     def extend_knots(self):
         knots, km = self._knots, self._knotmultiplicities
-        if self.periodic:
+        ret = np.array(list(itertools.chain.from_iterable([[knots[j]]*km[j] for j in range(len(km))])))
+        if self.periodic:  ## this seems to work
+            ret = ret[km[0] - 1:]
             p = self._degree
-            knots = numpy.concatenate( [ knots[-p-1:-1] -1 , knots, knots[1: p+1] + 1] )
-            km = numpy.concatenate( [ km[-p-1:-1], km , km[1: p+1] ] )
-        return list(itertools.chain.from_iterable([[knots[j]]*km[j] for j in range(len(km))]))
+            ret = np.concatenate([ret[-p-1:-1] - 1, ret, ret[1:p+1] +1])
+        return ret
+    
+    def to_c(self,n):
+        assert n >= -1
+        kv, km = self._knots.copy(), self._knotmultiplicities.copy()
+        if self.periodic:
+            km = np.array([np.min([i, self.degree - n]) for i in km])
+        else:
+            km = np.concatenate([[km[0]],[np.min([i, self.degree - n]) for i in km[1:-1]], [km[-1]]])
+        return self.__class__(self.degree, knotvalues = kv, knotmultiplicities = km, periodic = self.periodic)
+    
+    def c0_indices(self):
+        knots, km = self._knots, self._knotmultiplicities
+        extknots = np.array(list(itertools.chain.from_iterable([[knots[j]]*km[j] for j in range(len(km))])))
+        if self.periodic:
+            extknots = extknots[:-km[-1]]
+        #return [i for i in range(len(kv) - self._degree - 1) if np.all([extknots[i:i+
     
     @staticmethod
     def unify_kv(kv1, kv2):
@@ -198,15 +219,23 @@ class nonuniform_kv(knot_object):
     #    return nonuniform_kv(ret)
     
     def raise_multiplicities(self, amount, indices = [], knotvalues = []):
-        if amount == 0:
+        if all([len(indices) == 0, len(knotvalues) == 0]) or amount == 0:
             return self
-        assert any([indices != [] and knotvalues == [], indices == [] and knotvalues != []])
+        assert any([len(indices) != 0 and len(knotvalues) == 0, len(indices) == 0 and len(knotvalues) != 0])
         knots, new_km = self._knots, self._knotmultiplicities.copy()
         if not indices:
-            indices = [i for i in range(len(knots)) for j in knotvalues if knots[i] == j]
+            indices = [i for i in range(len(knots)) for j in knotvalues if np.abs(knots[i] - j)<0.000001]
+        if indices == []:
+            raise ValueError('Either invalid knotvalues or indices supplied')
         for i in indices:
             new_km[i] = new_km[i] + amount if (new_km[i] + amount <= self._degree + 1) else self._degree + 1
-        return nonuniform_kv(self._degree, knotvalues = knots, knotmultiplicities = new_km, periodic = self.periodic) 
+        return nonuniform_kv(self._degree, knotvalues = knots, knotmultiplicities = new_km, periodic = self.periodic)
+    
+    
+    def add_c0(self,knotvalues):
+        kv = self.add_knots(knotvalues)
+        kv = kv.raise_multiplicities(self._degree, knotvalues = knotvalues).to_c(0)
+        return kv
         
     def __add__(self, other):
         p = max(self._degree, other._degree)
@@ -214,8 +243,10 @@ class nonuniform_kv(knot_object):
         return nonuniform_kv(p, knotvalues = kv, knotmultiplicities = km, periodic = self.periodic)
     
     def add_knots(self, knotvalues):
-        assert all([ i <= 1 and i >= 0 for i in knotvalues]) and (0 not in knotvalues and 1 not in knotvalues)
-        knotvalues = [0] + list(knotvalues) + [1]
+        if len(knotvalues) == 0:
+            return self
+        assert all([ i <= 1 and i >= 0 for i in knotvalues]) #and (0 not in knotvalues and 1 not in knotvalues)
+        knotvalues = list(sorted(set([0] + list(knotvalues) + [1])))
         dummy = nonuniform_kv(self._degree, knotvalues = knotvalues, periodic = self.periodic) 
         return self + dummy
     
@@ -247,12 +278,20 @@ class tensor_kv(numpy.ndarray):
     
     extend_knots = _vectorize('extend_knots',list)
     knots = _prop_wrapper('knots')
-    periodic = _prop_wrapper('periodic',tuple)
+    degree = _prop_wrapper('degree')
+    #periodic = _prop_wrapper('periodic',tuple)
     ndims = _prop_wrapper('dim')
     knotmultiplicities = _prop_wrapper('knotmultiplicities')
     ref_by = _vectorize('ref_by')
+    ref = _vectorize('ref')
     add_knots = _vectorize('add_knots')
     raise_multiplicities = _vectorize('raise_multiplicities')
+    to_c = _vectorize('to_c')
+    add_c0 = _vectorize('add_c0')
+    
+    @property
+    def periodic(self):
+        return tuple([i for i in self if i.periodic])
     
     def at(self,n):  ## in __getitem__[n] we return the n-th knot_object, here a new tensor_kv with new._kvs = [self._kvs[n]]
         assert n < len(self) and n >= -len(self)
@@ -307,7 +346,7 @@ class _tensor_kv( numpy.ndarray ):
         assert len(indices) <= len(self)
         return tensor_kv(*[self[i].add_knots(knots[i]) for i in range(len(knots))])
     
-    def raise_multiplicity(self, amount, indi0ces = None, knotvalues = None):
+    def raise_multiplicity(self, amount, indices = None, knotvalues = None):
         if indices:
             assert knotvalues is None
             return tensor_kv(*[self[i].raise_multiplicity(amount, indices = indices[i]) for i in range(len(indices))])
@@ -442,7 +481,8 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
             return 0
         else:
             return self.dot(self.s)
-        
+    
+    @property
     def determinant(self):
         _map = self.mapping()
         return function.determinant(_map.grad(self.geom)) if len(self) > 1 else function.sqrt(_map.grad(self.geom).sum(-2))
@@ -640,13 +680,16 @@ class tensor_grid_object(base_grid_object):
     
     @classmethod
     def with_mapping(cls, s, cons, *args, **kwargs):
-        return cls(*args, s = s, cons = cons, **kwargs)    
+        ret = cls(*args, **kwargs)
+        ret.s, ret.cons = s, cons
+        return ret
     
     @classmethod
     def from_parent(cls, parent, side):
-        knots = parent._knots.at(side_dict[side])
         entries = parent.get_side(side)
-        ret = cls.with_mapping(entries[0], entries[1], parent.domain.boundary[side], parent.geom, side = side, target_space = parent._target_space, knots = knots)
+        init_lib = parent.instantiation_lib
+        init_lib['knots'] = parent._knots.at(side_dict[side])
+        ret = cls.with_mapping(entries[0], entries[1], parent.domain.boundary[side], parent.geom, **init_lib)
         ret._p = parent
         return ret
     
@@ -672,7 +715,7 @@ class tensor_grid_object(base_grid_object):
     ### INITIALIZATION, MAKE SHORTER
     
                     
-    def __init__(self, *args, ischeme = 6, knots = None, s = None, cons = None, side = None, target_space = None):
+    def __init__(self, *args, ischeme = 6, knots = None, side = None, target_space = None):
         assert knots is not None, 'Keyword-argument \'knots\' needs to be provided'
         self.ischeme, self._knots = ischeme, knots.copy()
         if len(args) == 2: ## instantiation via domain, geom
@@ -691,33 +734,61 @@ class tensor_grid_object(base_grid_object):
             raise NotImplementedError
         self._side = side  ## set self._side, this is gonna be handy when instantiating from a parent
         self.set_sides()  ## initialize boundary sides, ugly, find better solution
-        self._s = np.zeros(self.repeat*np.prod(self.ndims)) if s is None else s
-        self._cons = util.NanVec(len(self._s)) if cons is None else cons
         self.set_basis()
-        self._indices = tensor_index.from_go(self, side = side)
+        self.sets()
+        self.setcons()
+        self._indices = tensor_index.from_go(self)
+        
+    @property   
+    def instantiation_lib(self):  ## for making a (altered) copy
+        if self._side is not None:
+            print('Warning self.sides information gets lost if not instantiated from parent!!')
+        return { 'ischeme': self.ischeme, 'knots': self._knots, 'side': self._side, 'target_space': self.repeat}
+    
+    
+    #######################################################################################
+    
+    ## Inheritance of self._knots
+    
+    
+    def _kv_wrapper(name):
+        def wrapper(*args, **kwargs):
+            self, *args = args
+            _kwargs = self.instantiation_lib
+            _kwargs['knots'] = getattr(self._knots, name)(*args, **kwargs)
+            new_go = tensor_grid_object(**_kwargs)
+            new_mapping = self.prolong_weights(new_go, s = True, c = True)
+            return tensor_grid_object.with_mapping(*new_mapping, **_kwargs)
+        return wrapper
+    
+    def _prop_wrapper(name):
+        @property
+        def wrapper(self):
+            return getattr(self._knots, name)
+        return wrapper
+    
+    def extend_knots(self):
+        return self._knots.extend_knots()
+    
+    knots = _prop_wrapper('knots')
+    periodic = _prop_wrapper('periodic')
+    ndims = _prop_wrapper('ndims')
+    knotmultiplicities = _prop_wrapper('knotmultiplicities')
+    #ref_by = _kv_wrapper('ref_by')
+    add_knots = _kv_wrapper('add_knots')
+    raise_multiplicities = _kv_wrapper('raise_multiplicities')
+    to_c = _kv_wrapper('to_c')
+    add_c0 = _kv_wrapper('add_c0')
+    
+    del _kv_wrapper
+    del _prop_wrapper
         
         
     ###########################################################################################
-     
-    #def set_sides(self):
-        #if len(self) == 2:
-        #    if self._knots.periodic  == ():
-        #        self._sides = planar_sides
-        #    elif self._knots.periodic  == (1,):
-        #        self._sides = list(set(planar_sides) - set(dim_boundaries[self._knots.periodic[0]]))
-        #    else:
-        #        raise ValueError('Periodicity in the xi-direction is prohibited, use eta instead')
-        #elif len(self) == 1:
-        #    if self._side is None:
-        #        self._sides = ['left', 'right']
-        #    else:
-        #        self._sides = ['bottom', 'top'] if self._side in ['left', 'right'] else ['left', 'right']
-        #else:
-        #    self._sides = ['left', 'right', 'bottom', 'top', 'front', 'back']
         
     def set_sides(self):
         if self.periodic == (0,):
-            ValueError('Periodicity in the xi-direction is prohibited, use eta instead')
+            raise ValueError('Periodicity in the xi-direction is prohibited, use eta instead')
         self._sides = self.domain._bnames
             
             
@@ -749,14 +820,23 @@ class tensor_grid_object(base_grid_object):
     
     def gets(self):
         return self._s
-    def sets(self, value):
-        assert len(value) == len(self.basis)*self.repeat
-        self._s = value  
+    
+    def sets(self, value = None):
+        if value is None:
+            self._s = np.zeros(self.repeat*len(self.basis))
+        else:
+            assert len(value) == len(self.basis)*self.repeat
+            self._s = value  
+            
     def getcons(self):
         return self._cons
-    def setcons(self, value):
-        assert len(value) == len(self.basis)*self.repeat
-        self._cons = value
+    
+    def setcons(self, value = None):
+        if value is None:
+            self._cons = util.NanVec(len(self.s))
+        else:
+            assert len(value) == len(self.basis)*self.repeat
+            self._cons = value
         
     s = property(gets, sets)
     cons = property(getcons, setcons)
@@ -908,13 +988,28 @@ class tensor_grid_object(base_grid_object):
         new_mapping = self.prolong_weights(new_go, s = prolong_mapping, c = prolong_constraint)
         return tensor_grid_object.with_mapping(*new_mapping, knots = new_knots, side = self._side, target_space = self._target_space)
     
+    def ref(self,ref):
+        assert ref >= 0
+        if ref == 0:
+            return self
+        ret = copy.deepcopy(self)
+        for i in range(ref):
+            ret = ret.ref_by([range(len(k) - 1) for k in ret.knots])
+        return ret            
+        
+    
     def prolong_weights(self, new_go, method = 'T', s = True, c = True):  ## ugly, make prettier
         assert_params = [tensor_grid_object.are_nested(self,new_go)] #+ [self.degree <= new_go.degree]
         assert all(assert_params), 'the grid objects are not nested'
         if method == 'T':  ## funcs = [vec1, vec2, ...]
             ## make T_n, T_m, ....
-            Ts = [prolongation_matrix(*[new_go._knots[i], self._knots[i]]) for i in range(len(self._knots))]  
-            T = np.kron(*Ts) if len(Ts) != 1 else Ts[0]
+            Ts = [prolongation_matrix(*[new_go._knots[i], self._knots[i]]) for i in range(len(self._knots))]
+            if len(Ts) == 1:
+                T = Ts[0]
+            else:
+                ## allow for sparse later
+                #T = (sp.sparse if all([sp.sparse.issparse(t) for t in Ts]) else np).kron(*Ts)
+                T = np.kron(*Ts)
             l = self.repeat
             ret = [block_diag(*[T]*l).dot(self.s) if s else None, prolong_bc_go(self, new_go, *Ts) if c else None]
             return ret
@@ -927,7 +1022,7 @@ class tensor_grid_object(base_grid_object):
             
     def prolong_function(self):
         ## Forthcoming
-        pass
+        raise NotImplementedError
     
     
     def __getitem__(self,side):
@@ -936,7 +1031,9 @@ class tensor_grid_object(base_grid_object):
     
     
     def detect_defects(self):
-        return make_jac_basis(self)
+        jgo = jac_go(self)
+        jgo.s = jgo.project(self.determinant)
+        return jgo
     
     
     
@@ -1012,6 +1109,10 @@ class tensor_grid_object(base_grid_object):
         elif self <= fromgrid:  ## self is subset of other, restrict other to self, while keeping self.cons
             ## We do not have to set constrain_corners to true assuming that self.cons satisfies s(0,0) = p0, ...
             return tensor_grid_object.grid_embedding(self, fromgrid, prolong_constraints = False)
+        
+    @requires_dependence(samedim, same_degree)
+    def elast(self, other, alpha = 1):
+        return elasticity.main(self,other, alpha = alpha)
         
         
     
@@ -1089,6 +1190,41 @@ class tensor_grid_object(base_grid_object):
         
     def __pow__(self, other):  ## see if grids are nested
         return tensor_grid_object.are_nested(self,other)
+    
+    
+class dummy_go(tensor_grid_object):
+    
+    def __init__(self,*args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+    def _kv_wrapper(name):
+        def wrapper(*args, **kwargs):
+            self, *args = args
+            _kwargs = self.instantiation_lib
+            _kwargs['knots'] = getattr(self._knots, name)(*args, **kwargs)
+            new_go = dummy_go(**_kwargs)
+            new_mapping = self.prolong_weights(new_go, s = True, c = True)
+            return dummy_go.with_mapping(*new_mapping, **_kwargs)
+        return wrapper
+    
+    def _prop_wrapper(name):
+        @property
+        def wrapper(self):
+            return getattr(self._knots, name)
+        return wrapper
+    
+    def extend_knots(self):
+        return self._knots.extend_knots()
+    knots = _prop_wrapper('knots')
+    periodic = _prop_wrapper('periodic')
+    ndims = _prop_wrapper('ndims')
+    knotmultiplicities = _prop_wrapper('knotmultiplicities')
+    ref_by = _kv_wrapper('ref_by')
+    add_knots = _kv_wrapper('add_knots')
+    raise_multiplicities = _kv_wrapper('raise_multiplicities')
+    
+    del _kv_wrapper
+    del _prop_wrapper
 
 
 def make_go(grid_type, *args, **kwargs):
@@ -1255,13 +1391,15 @@ def ret_greville_abs(knots,p, ref = 0):  # knots = [knot_object_x, knot_object_y
         return np.asarray(grevs[0])
 
 
-def make_jac_basis(go,ref = 0):  ## make a B-spline basis of order 2p - 1 with p + 1 internal knot repetitions 
+def jac_go(go,ref = 0):  ## make a B-spline basis of order 2p - 1 with p + 1 internal knot repetitions 
     assert go.knots is not None
-    domain, geom, knots, p  = go.domain, go.geom, go.knots, go.degree
+    domain, geom, knots, p, periodic  = go.domain, go.geom, go.knots, np.array(go.degree), go.periodic
+    _p = 2*p - 1
     assert isinstance(domain, topology.StructuredTopology)
-    km = [[2*p[i]] + [p[i] + 1]*(len(knots[i]) - 2) + [2*p[i]] for i in range(len(knots))]
-    knots_jac = [list(itertools.chain.from_iterable([[knots[i][j]]*km[i][j] for j in range(len(km[i]))])) for i in range(len(km))] # make the knot_vector with repeated knots
-    return domain.basis_bspline(2*p - 1, knotmultiplicities = km), knots_jac
+    km = [[p[i] + 1 if i in periodic else 2*p[i]] + [p[i] + 1]*(len(knots[i]) - 2) + [p[i] + 1 if i in periodic else 2*p[i]] for i in range(len(knots))]
+    #knots_jac = [list(itertools.chain.from_iterable([[knots[i][j]]*km[i][j] for j in range(len(km[i]))])) for i in range(len(km))] # make the knot_vector with repeated knots
+    _knots = np.prod([nonuniform_kv(_p[i], knotvalues = go._knots[i].knots, periodic = go._knots[i].periodic, knotmultiplicities = km[i]) for i in range(len(km))])
+    return tensor_grid_object(knots = _knots, target_space = 1)
 
 
 def collocate_greville(go, func, onto, onto_p, onto_knots = None, ref = 0, ret_domain = False):  # collocate func onto onto. the grid_object must have verts specified for the greville abscissae

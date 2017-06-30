@@ -2,6 +2,7 @@ import collections, functools
 import numpy as np
 from nutils import *
 from scipy.linalg import block_diag
+import scipy.sparse
 
 
 ########################################
@@ -100,6 +101,8 @@ def prolongation_matrix(*args):  ## MAKE THIS SPARSE
     ## make sure we've got 2 tensor_kvs with dimension 1
     assert_params = [args[0] <= args[1], args[1] <= args[0]]
     assert any(assert_params) and args[0]._degree == args[1]._degree, 'The kvs must be nested'  ## check for nestedness
+    if all(assert_params):
+        return np.eye(args[0].dim)
     p = args[0]._degree
     kv_new, kv_old = [k.extend_knots() for k in args] ## repeat first and last knots
     if assert_params[0]:  ## kv_new <= kv_old, reverse order 

@@ -5,3 +5,23 @@
 - periodic O-grid ain't work - Solved, I believe
 
 - go1.replace(go2[side]) ain't work for O-grids as well as normal grids - Solved, I believe
+
+- raise_multiplicity, does not work for O-grids
+	the issue is, I believe that:
+	#####
+	knots = numpy.concatenate( [ knots[-p-1:-1] -1 , knots, knots[1: p+1] + 1] )
+	is only valid for knot-repetitions of one
+	or possibly
+	T_ = T
+        T = T[:n-2*p,:m-2*p]
+        T[:,0:p] += T_[:n-2*p,m-2*p: m-2*p+p]
+	in prolongation matrix.
+	ref and ref_by seems to work fine for some reason though.
+	#####
+- ref_by, add_knot does not work for O-grids with repeated knots - something is wrong in the dimension of the prolongation matrix, I believe
+	- correction it works if the knot-repetition is far enough removed from the 0th or last knot - Fixed, I believe
+
+- ref does not work for jac_go  (possibly the same issue as raise multiplicity)  - Fixed, I believe
+
+- linear elasticity sometimes doesn't work. The resulting mapping has its weights mutliplied by a constant factor that shouldn't be there.
+  Also some resolution gets lost.

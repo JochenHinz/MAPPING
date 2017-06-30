@@ -12,7 +12,7 @@ from auxilliary_classes import *
 import os, sys, pickle
 
 
-def main(nelems = [[20, False],[20, False]], degree=3, basis_type = 'bspline', interp_degree = 5, preproc = True, multigrid = 1, repair_ordinary = False, local_repair = False, repair_dual = False, problem = 'middle', save = True, ltol = 1e-7, btol = 0.01, name = 'reparam'):
+def main(nelems = [[20, False],[20, False]], degree=2, basis_type = 'bspline', interp_degree = 5, preproc = True, multigrid = 1, repair_ordinary = False, local_repair = False, repair_dual = False, problem = 'middle', save = True, ltol = 1e-7, btol = 0.1, name = 'reparam'):
    
     assert len(nelems) == 2
     
@@ -20,16 +20,14 @@ def main(nelems = [[20, False],[20, False]], degree=3, basis_type = 'bspline', i
     rep_dict = None
     
     if basis_type == 'spline':
-        knots = [ut.uniform_kv(0,1,nelems[i]+1) for i in range(2)]
-        domain, geom = mesh.rectilinear([n.knots for n in knots])
-        go = ut.make_go(basis_type, domain, geom, degree, ischeme = ischeme, knots = knots)
+        raise NotImplementedError
         
     elif basis_type == 'bspline':
         knots = numpy.prod([ut.nonuniform_kv(degree, knotvalues = numpy.linspace(0,1,nelems[i][0] + 1), periodic = nelems[i][1]) for i in range(2)])
         go = ut.make_go(basis_type, ischeme = ischeme, knots = knots)
     
     if problem == 'middle':
-        goal_boundaries, corners = pl.middle(go)
+        go, goal_boundaries, corners = pl.middle(go, c0 = True)
         
     elif problem == 'bottom':  ## THE REFINEMENT NEEDS TO BE CARRIED OUT BEFORE pl.bottom is called otherwise we get nonsense
         ## This is prolly due to goal_boundaries being faulty or so
@@ -45,14 +43,14 @@ def main(nelems = [[20, False],[20, False]], degree=3, basis_type = 'bspline', i
         for i in range(0):
             l = len(go.knots[0])
             go = go.ref_by([[l-4,l-3, l-2], []])
-        goal_boundaries, corners = pl.single_female_casing(go)
+        go, goal_boundaries, corners = pl.single_female_casing(go)
         #rep_func = rep.minimize_angle(go, goal_boundaries, 'left')
         #rep_dict = {'left': rep_func, 'right': None}
         
     elif problem == 'single_male_casing':
         for i in range(2):
             go = go.ref_by([[0,1,2], []])
-        goal_boundaries, corners = pl.single_male_casing(go, radius = 36.061810867369296)
+        go, goal_boundaries, corners = pl.single_male_casing(go)
             
     elif problem == 'nrw':
         goal_boundaries, corners = pl.nrw(go)
@@ -64,13 +62,15 @@ def main(nelems = [[20, False],[20, False]], degree=3, basis_type = 'bspline', i
     
     mgo[-1].quick_plot_boundary()
 
-    start = len(mgo) - 3
+    start = 0
     for i in range(start,len(mgo)):
-        go_ = mgo[i] if i == start else mgo[i] | mgo[i-1]  ## take mg_prolongation after first iteration
+        go_ = mgo[i] if i == start else mgo[i] | mgo[i-1] #mgo[i-1].elast(mgo[i]) ##take mg_prolongation after first iteration
         solver = Solver.Solver(go_, go_.cons)   
         #initial_guess = solver.one_d_laplace(0) if i == 0 else go_.s
         initial_guess = solver.transfinite_interpolation(goal_boundaries, corners = corners) if i == start else go_.s
-        go_.s = solver.solve(initial_guess, method = 'Elliptic', solutionmethod = 'Newton')
+        dummy_go = ut.tensor_grid_object.with_mapping(initial_guess, go_.cons, **go_.instantiation_lib)
+        dummy_go.quick_plot()
+        go_.s = solver.solve(initial_guess, method = 'Elliptic_new' if i < len(mgo) - 1 else 'Elliptic_new', solutionmethod = 'Newton')
         mgo[i] = go_
         mgo[i].quick_plot()
         

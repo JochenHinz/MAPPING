@@ -85,11 +85,10 @@ def match_indices_minimum(A, Indices, tol = 1):  ## A[i,j] = ||p_i - p_j||
     try:
         matches.append(match(A, Indices, tol = tol))
         i,j = np.unravel_index(np.argmin(A), A.shape)
-        print(i,j)
         matches += match_indices_minimum(A[:i, :j], Indices[:i, :j], tol = tol) ## try to match to the left
         matches += match_indices_minimum(A[i+1:, j+1:], Indices[i+1:, j+1:], tol = tol) ## try to match to the right
     except:
-        print('here3')
+        pass
     return matches
 
 def match_minimum(leader, follower, fac = 2):
@@ -120,7 +119,6 @@ def constrained_arc_length(leader, follower, fac = 16):
     ## length param such that  p_i, p_j are matched when ||p_i - p_j|| <= tol * min(||p_i - p_j||)
     indices = match_minimum(leader, follower, fac = fac)
     assert all([m in indices for m in [[0,0], [leader.shape[1] - 1, follower.shape[1] -1]]])
-    print(indices)
     verts1, verts2 = discrete_length_param(leader), [0]
     for i in range(len(indices) - 1):
         start, stop = verts1[indices[i][0]], verts1[indices[i+1][0]]

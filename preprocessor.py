@@ -88,7 +88,7 @@ def generate_cons(go, boundary_funcs, corners = None, btol = 1e-2):
         else:  ## differentiable curve
             domain_ = domain.boundary[side]
             ischeme_ = gauss(ischeme*2)
-        cons_library[side] = domain_.refine(3).project(goal, onto=basis, geometry=geom, ischeme=ischeme_, constrain=cons)
+        cons_library[side] = domain_.refine(2).project(goal, onto=basis, geometry=geom, ischeme=ischeme_, constrain=cons)
         cons |= cons_library[side]
     return cons
 
@@ -155,5 +155,6 @@ def boundary_projection(go, goal_boundaries, corners = None, btol = 1e-2, rep_di
         else:
             go_list.append(proj)
             #go_list[-1].quick_plot_grid()
+            print(go_list[-1].knotmultiplicities)
             go_list[-1].quick_plot_boundary()
     return ut.multigrid_object(go_list)

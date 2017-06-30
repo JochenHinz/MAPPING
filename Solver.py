@@ -95,7 +95,7 @@ class Solver(object):
         return go.domain.project(expression, onto=basis, geometry=geom, ischeme=gauss(go.ischeme), constrain = go.cons)
             
               
-    def Elliptic(self,c, russian = False):
+    def Elliptic(self,c, russian = True):
         go = self.go
         g11, g12, g22 = self.fff(c)
         x_xi, x_eta, y_xi, y_eta = self.func_derivs(c)
@@ -111,10 +111,22 @@ class Solver(object):
         go = self.go
         g11, g12, g22 = self.fff(c)
         x_xi, x_eta, y_xi, y_eta = self.func_derivs(c)
-        x_d, y_d = [x_xi, x_eta], [y_xi, y_eta]
-        vec1 = go.basis.grad(go.geom)[:,0]*x_d[0] + go.basis.grad(go.geom)[:,1]*x_d[1]
-        vec2 = go.basis.grad(go.geom)[:,0]*y_d[0] + go.basis.grad(go.geom)[:,1]*y_d[1]
-        return -function.concatenate((vec1,vec2))
+        b = go.basis
+        b_xi, b_eta = [b.grad(go.geom)[:,i] for i in range(2)]
+        x = go.basis.vector(go.repeat).dot(c)
+        J = function.determinant(x.grad(go.geom))
+        #vec1 = go.basis.grad(go.geom)[:,0]*J*g22 - go.basis.grad(go.geom)[:,1]*J*g12
+        #vec2 = -go.basis.grad(go.geom)[:,0]*J*g12 + go.basis.grad(go.geom)[:,1]*J*g11
+        #vec1 = go.basis*(g22.grad(go.geom)[0]*J - J.grad(go.geom)[0]*g22 - g12.grad(go.geom)[1]*J + J.grad(go.geom)[1]*g12)
+        #vec2 = go.basis*(-g12.grad(go.geom)[0]*J + J.grad(go.geom)[0]*g12 + g11.grad(go.geom)[1]*J - J.grad(go.geom)[1]*g11)
+        vec1 = x_xi*((b*g22).grad(go.geom)[:,0] - (b*g12).grad(go.geom)[:,1]) + x_eta*(-(b*g12).grad(go.geom)[:,0] + (b*g11).grad(go.geom)[:,1])
+        vec2 = y_xi*((b*g22).grad(go.geom)[:,0] - (b*g12).grad(go.geom)[:,1]) + y_eta*(-(b*g12).grad(go.geom)[:,0] + (b*g11).grad(go.geom)[:,1])
+        #vec_d_1 = b*((x_xi*function.stack([g22,-g12]) + x_eta*function.stack([-g12,g11]))).dotnorm(go.geom)
+        #vec_d_2 = b*((y_xi*function.stack([g22,-g12]) + y_eta*function.stack([-g12,g11]))).dotnorm(go.geom)
+        vec_d_1 = b*function.jump(x_xi)
+        vec_d_2 = b*function.jump(y_xi)
+        return -function.concatenate((vec1,vec2)), 0.99*function.concatenate((vec_d_1,vec_d_2))
+        
         
     def Liao(self,c):
         g11, g12, g22 = self.fff(c)
@@ -139,25 +151,28 @@ class Solver(object):
         return g11, g12, g22
     
     
-    def solve(self, init = None, ltol = 1e-6, method = 'Elliptic', solutionmethod = 'Newton', t0 = None, cons = None):
+    def solve(self, init = None, method = 'Elliptic', solutionmethod = 'Newton', t0 = None, cons = None):
         go = self.go
         basis = go.basis
+        ltol = 1e-1/float(len(basis))
         if cons is None:
             cons = self.cons
         if init is None:
             init = self.cons|0
         target = function.DerivativeTarget([len(go.basis.vector(2))])
         if method == 'Elliptic':
-            x = go.basis.vector(go.repeat).dot(target)
-            res = model.Integral(self.Elliptic(target), domain=go.domain, geometry=x, degree=go.ischeme*3)
+            #x = go.basis.vector(go.repeat).dot(target)
+            res = model.Integral(self.Elliptic(target), domain=go.domain, geometry=go.geom, degree=go.ischeme*3)
         elif method == 'Liao':
             res = model.Integral(self.Liao(target), domain=go.domain, geometry=go.geom, degree=go.ischeme*3).derivative(target)
         elif method == 'AO':
             res = model.Integral(self.AO(target), domain=go.domain, geometry=go.geom, degree=go.ischeme*3).derivative(target)
         elif method == 'Elliptic_partial':     
             res = model.Integral(go.basis.vector(go.repeat)['ik,l']*go.geom['k,l'], domain=go.domain, geometry=go.basis.vector(go.repeat).dot(target), degree=go.ischeme*3)
-        elif method == 'Elliptic_partial_new':
-            res = model.Integral(self.Elliptic_new(target), domain=go.domain, geometry=go.basis.vector(go.repeat).dot(target), degree=go.ischeme*3)
+        elif method == 'Elliptic_new':
+            G, DG = self.Elliptic_new(target)
+            res = model.Integral(G, domain=go.domain, geometry=go.geom, degree=go.ischeme*3)
+            res += model.Integral(DG, domain = go.domain.interfaces, geometry=go.geom, degree=go.ischeme*3)
         else:
             raise ValueError('unknown method: ' + method)
         if solutionmethod == 'Newton':

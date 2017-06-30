@@ -31,6 +31,9 @@ def norm(x_, center = np.array([0,0])):
     x = x_.copy() - center[:,None]
     return np.sqrt((x**2).sum(0))
 
+def thin(x, tolerance = 1e-6):
+    return x.T[np.concatenate([((x.T[1:]-x.T[:-1])**2).sum(1) > 1e-4, [True]])].T
+    
 def cusp(a,b,c):  ## x**2 + y**2 = a**2;   (x-c)**2 + y**2 = b**2
     x = (a**2 - b**2 + c**2)/(2*c)
     y = np.sqrt(a**2 - x**2)
@@ -39,6 +42,24 @@ def cusp(a,b,c):  ## x**2 + y**2 = a**2;   (x-c)**2 + y**2 = b**2
 def single_casing(radius,steps= 1000):
     angles = np.linspace(0,2*np.pi,steps)
     return circle_point(radius,angles)
+
+distances = rep.discrete_length
+
+def c0_indices(c, thresh = 0.5):
+    assert c.shape[0] == 2
+    periodic = False
+    x = c.copy()  ## don't mess with x passed by reference
+    length = x.shape[1]
+    if all(x[:,0] == x[:,-1]):  ## include first and last index in angle computation
+        periodic = True
+        x = np.concatenate([x[:,-2][:,None],x,x[:,2][:,None]], axis = 1)
+    x_ = x[:,1:] - x[:,:-1]
+    inner = (x_[:,1:]*x_[:,:-1]).sum(0)
+    dist = np.sqrt((x_**2).sum(0))
+    dist = dist[1:]*dist[:-1]
+    ret = np.arccos(inner/dist)
+    indices = [i if periodic else i+1 for i in range(len(ret)) if ret[i] > thresh]
+    return indices
 
 
 class ndspline:
@@ -49,8 +70,8 @@ class ndspline:
         dummy._splines = splines
         return dummy
     
-    def __init__(self, verts, points):
-        self._splines = tuple([sp.interpolate.InterpolatedUnivariateSpline(verts,i) for i in points])
+    def __init__(self, verts, points, k = 1):
+        self._splines = tuple([sp.interpolate.InterpolatedUnivariateSpline(verts,i, k=k) for i in points])
     
     def __call__(self, x):
         return np.vstack([spl(x) for spl in self._splines])
@@ -99,58 +120,30 @@ def twin_screw(angle = 0):  ## angle corresponds to male
     male = np.hstack([male, male[:,0][:,None]])
     return ut.rotation_matrix(angle).dot(male), ut.rotation_matrix(-2/3.0*angle).dot(female) + np.array([56.52,0])[:,None]
 
-def single_male_casing_old(go, angle = 0, radius = 38, splinify = True, O_grid = True, new = True):
-    if new:
-        xml = ET.parse(pathdir +'/xml/SRM4+6_gap0.1mm.xml').getroot()
-    else:
-        xml = ET.parse(pathdir +'/xml/SRM4+6.xml').getroot()
-    male = xml[0].text.split()
-    male = np.asarray([float(i) for i in male])
-    male = np.reshape(male,[2, len(male)//2])
-    male = np.vstack([male.T, male[:,0]])
-    steps = male.shape[0]
-    absc = np.linspace(0,2*np.pi, steps)
-    casing = (radius*np.vstack([np.cos(absc), np.sin(absc)])).T
-    if not O_grid:
-        corners = {(0,0): (male[0,0],male[0,1]), (1,0): (casing[0,0],casing[0,1]), (0,1): (male[0,0],male[0,1]), (1,1): (casing[-1,0],casing[-1,1])}
-    else:
-        corners = None
-    leftverts, rightverts = [rep.discrete_length_param(item) for item in [male, casing]]
-    goal_boundaries = dict()
-    if not O_grid:
-        goal_boundaries.update(
-                bottom = lambda g: corners[0,0]*(1-g[0]) + corners[1,0]*g[0],
-                top = lambda g: corners[0,1]*(1-g[0]) + corners[1,1]*g[0],
-            )
-    if splinify:
-            goal_boundaries.update(
-                left = lambda g: ut.interpolated_univariate_spline(leftverts, male, g[1]),
-                right = lambda g: ut.interpolated_univariate_spline(rightverts, casing, g[1]),
-            )
-    else:
-            goal_boundaries.update(
-                left = Pointset(leftverts[1:-1], male[1:-1]),
-                bottom = Pointset(rightverts[1:-1], casing[1:-1]),
-            )
-    return goal_boundaries, corners
 
-
-def single_male_casing(go, radius = 36.1):
+def single_male_casing(go, radius = 36.1, c0 = True):
+    assert go.periodic == [1]
     male = twin_screw()[0]
     angle = theta(male[:,0][:,None])
     absc = np.linspace(angle,angle+2*np.pi, male.shape[1])
     casing = (radius*np.vstack([np.cos(absc), np.sin(absc)]))
     verts_male, verts_casing = [rep.discrete_length_param(item) for item in [male, casing]]
+    indices = c0_indices(male)
+    print(verts_male[indices], go.knots)
+    go = go.add_knots([[],verts_male[indices]])
+    go = go.raise_multiplicities([0,go.degree[1]-1], knotvalues = [[],verts_male[indices]])
     goal_boundaries = dict()
     casing_spline = lambda g: ut.interpolated_univariate_spline(verts_casing, casing, g[1])
     goal_boundaries.update(
                 right = lambda g: radius*casing_spline(g)/function.sqrt((casing_spline(g)**2).sum(0)),
                 left = lambda g: (ut.interpolated_univariate_spline(verts_male, male, g[1], center = np.array([0, 0.0]))),
             )
-    return goal_boundaries, None
+    print(go.knotmultiplicities)
+    return go, goal_boundaries, None
 
 
 def single_female_casing(go, radius = 36):
+    assert go.periodic == [1]
     female = twin_screw()[1] - np.array([56.52,0])[:,None]
     verts = rep.discrete_length_param(female)
     spl = ndspline(verts, female)
@@ -159,11 +152,12 @@ def single_female_casing(go, radius = 36):
     goal_boundaries = dict()
     casing = circle_point(radius,theta(female.T[indices].T))
     casing_spline = lambda g: ut.interpolated_univariate_spline(verts[indices], casing, g[1])
+    female = twin_screw()[1]
     goal_boundaries.update(
                 left = lambda g: radius*casing_spline(g)/function.sqrt((casing_spline(g)**2).sum(0)) + np.array([56.52,0]),
-                right = lambda g: ut.interpolated_univariate_spline(verts, female, g[1], center = np.array([56.52,0])),
+                right = lambda g: ut.interpolated_univariate_spline(verts, female, g[1]),
             )
-    return goal_boundaries, None
+    return go, goal_boundaries, None
 
 
 
@@ -195,17 +189,23 @@ def isoline(go, radius_male = 36.1, radius_female = 36):
     
     
 
-def middle(go, reparam = 'constrained_arc_length', splinify = True): #Return either a spline or point-cloud representation of the screw-machine with casing problem
+def middle(go, reparam = 'constrained_arc_length', splinify = True, c0 = True): #Return either a spline or point-cloud representation of the screw-machine with casing problem
     pathdir = os.path.dirname(os.path.realpath(__file__))
     #ref_geom = go.geom
     
     top = numpy.stack([numpy.loadtxt(pathdir+'/xml/t2_row_{}'.format(i)) for i in range(1, 3)]).T
-    top = top[numpy.concatenate([((top[1:]-top[:-1])**2).sum(1) > 1e-8, [True]])]
+    top = top[numpy.concatenate([((top[1:]-top[:-1])**2).sum(1) > 1e-4, [True]])]
     top = top[65:230][::-1].T
 
     bot = np.stack([np.loadtxt(pathdir+'/xml/t1_row_{}'.format(i)) for i in range(1, 3)]).T
     bot = bot[numpy.concatenate([((bot[1:]-bot[:-1])**2).sum(1) > 1.5*1e-4, [True]])]
     bot = bot[430:1390][::-1].T
+    #bot = np.delete(bot.T, 568, 0).T
+    
+    indices = c0_indices(bot)
+    
+    print(indices, 'indices')
+    
     if True: # fix
         if reparam == 'standard' or reparam == 'length':
             top_verts, bot_verts = [rep.discrete_length_param(item) for item in [top, bot]] ## for now only upper and lower
@@ -215,6 +215,11 @@ def middle(go, reparam = 'constrained_arc_length', splinify = True): #Return eit
             top_verts, bot_verts = rep.constrained_arc_length(top, bot, 2)
         else:
             raise ValueError(reparam +' not supported')
+            
+        if c0:
+            #go = go.add_c0([go.knots[1],[]]).to_c([1,1])
+            go = go.add_c0([bot_verts[indices],[]])
+        
         corners = {(0,0): bot.T[0], (1,0): bot.T[-1], (0,1): top.T[0], (1,1): top.T[-1]}
         goal_boundaries = dict(
             left = lambda g: corners[0,0]*(1-g[1]) + corners[0,1]*g[1],
@@ -231,7 +236,7 @@ def middle(go, reparam = 'constrained_arc_length', splinify = True): #Return eit
                 bottom = Pointset(bot_verts[1:-1], bot[1:-1]),
             )
             
-    return goal_boundaries, corners
+    return go, goal_boundaries, corners
 
 
 def sines(go):
@@ -267,8 +272,9 @@ def nrw(go, stepsize = 1):
     vec = vec[l]
     vec_ = np.reshape(vec,[len(vec)//2, 2]).T
     stepsize = vec_.shape[1]//4
-    vec_0, vec_1, vec_2, vec_3 = vec_[:,0:stepsize].T, vec_[:,stepsize:2*stepsize - 3].T, vec_[:,2*stepsize-3:3*stepsize-5].T[::-1,:], vec_[:,3*stepsize-5:].T[::-1,:]
+    vec_0, vec_1, vec_2, vec_3 = vec_[:,0:stepsize], vec_[:,stepsize:2*stepsize - 3], vec_[:,2*stepsize-3:3*stepsize-5].T[::-1,:].T, vec_[:,3*stepsize-5:].T[::-1,:].T
     verts_0, verts_1, verts_2, verts_3 = [rep.discrete_length_param(item) for item in [vec_0, vec_1, vec_2, vec_3]]
+    print(vec_1.shape)
     goal_boundaries = dict()
     goal_boundaries.update(
                 top = lambda g: ut.interpolated_univariate_spline(verts_1, vec_1, g[0]),
@@ -276,7 +282,7 @@ def nrw(go, stepsize = 1):
                 left = lambda g: ut.interpolated_univariate_spline(verts_0, vec_0, g[1]),
                 right = lambda g: ut.interpolated_univariate_spline(verts_2, vec_2, g[1]),
             )
-    corners = {(0,0): (vec_0[0,0],vec_0[0,1]), (1,0): (vec_3[-1,0],vec_3[-1,1]), (0,1): (vec_1[0,0],vec_1[0,1]), (1,1): (vec_1[-1,0],vec_1[-1,1])}
+    corners = {(0,0): (vec_0[0,0],vec_0[1,0]), (1,0): (vec_3[0,-1],vec_3[1,-1]), (0,1): (vec_1[0,0],vec_1[1,0]), (1,1): (vec_1[0,-1],vec_1[1,-1])}
     return goal_boundaries, corners
     
     
