@@ -6,6 +6,7 @@ import utilities as ut
 import reparam as rep
 import collections, re, os, sys
 import xml.etree.ElementTree as ET
+import separator as sep
 
 pathdir = os.path.dirname(os.path.realpath(__file__))
 
@@ -61,6 +62,31 @@ def c0_indices(c, thresh = 0.5):
     indices = [i if periodic else i+1 for i in range(len(ret)) if ret[i] > thresh]
     return indices
 
+def snail(angle = 0):
+    left = []
+    with open('xml/screwLeft.txt') as fl:
+        for l in fl:
+            row = l.split()
+            left.append(np.array([float(row[i]) for i in range(2)])[:,None])
+    left = np.roll(np.concatenate(left, axis = 1),250, axis = 1)
+    left = np.concatenate([left, left.T[0].T[:,None]],axis = 1)
+
+    thet = theta(left, center = np.array([-13.1,0]))
+    casing_left = circle_point(16,thet)
+
+    right = []
+    with open('xml/screwRight.txt') as fl:
+        for l in fl:
+            row = l.split()
+            right.append(np.array([float(row[i]) for i in range(2)])[:,None])
+    right = np.roll(np.concatenate(right, axis = 1),250, axis = 1)
+    right = np.concatenate([right, right.T[0].T[:,None]],axis = 1)
+
+    thet = theta(right, center = np.array([13.1,0]))
+    casing_right = circle_point(16,thet)
+    
+    return left, casing_left, right, casing_right
+
 
 class ndspline:
     
@@ -91,10 +117,15 @@ class ndspline:
         return normal*np.array([[0, -1],[1,0]]).dot(deriv(x))
 
 
-def rot(weights, angle_):
-    assert weights.shape[0] == 2
+def rotate(x_,angle_, center = np.array([0,0])):
+    assert x_.shape[0] == 2
+    if len(center.shape) == 1:
+        center = center[:,None]
+    x = x_.copy()
+    x -= center
     mat = np.array([[np.cos(angle_), -np.sin(angle_)], [np.sin(angle_), np.cos(angle_)]])
-    return mat.dot(weights.T).T
+    x = mat.dot(x) + center
+    return x
 
 
 def arr(thing):
@@ -119,6 +150,29 @@ def twin_screw(angle = 0):  ## angle corresponds to male
     male = np.roll(male,male.shape[1]//2, axis = 1)
     male = np.hstack([male, male[:,0][:,None]])
     return ut.rotation_matrix(angle).dot(male), ut.rotation_matrix(-2/3.0*angle).dot(female) + np.array([56.52,0])[:,None]
+
+
+def wedge(go):
+    corners = {(0,0): (0,0), (1,0): (1,0), (0,1): (0,1), (1,1): (1,2)}
+    goal_boundaries = dict(left= lambda g: function.stack([0,g[1]]), right= lambda g: function.stack([1,2*g[1]]), top=lambda g: function.stack([g[0],1+g[0]**2]), bottom=lambda g: function.stack([g[0],0]))
+    return go, goal_boundaries, corners
+
+def single_left_snail(go, c0 = True):
+    assert go.periodic == [1]
+    left, casing_left = snail()[:2]
+    verts = rep.discrete_length_param(left)
+    if c0:
+        indices = c0_indices(left, thresh = 0.3)
+        go = go.add_knots([[],verts[indices]])
+        go = go.raise_multiplicities([0,go.degree[1]-1], knotvalues = [[],verts[indices]])
+    goal_boundaries = dict()
+    casing_spline = lambda g: ut.interpolated_univariate_spline(verts, casing_left, g[1])
+    goal_boundaries.update(
+                right = lambda g: 16*casing_spline(g)/function.sqrt((casing_spline(g)**2).sum(0)) - np.array([13.1,0]),
+                left = lambda g: (ut.interpolated_univariate_spline(verts, left, g[1])),
+            )
+    return go, goal_boundaries, None
+    
 
 
 def single_male_casing(go, radius = 36.1, c0 = True):
@@ -158,6 +212,20 @@ def single_female_casing(go, radius = 36):
                 right = lambda g: ut.interpolated_univariate_spline(verts, female, g[1]),
             )
     return go, goal_boundaries, None
+
+
+def separator(go, angle_):
+    bottom, top, left, right = sep.separator(angle_)
+    left_verts, right_verts = rep.constrained_arc_length(left, right, 6)
+    bottom_verts, top_verts = [rep.discrete_length_param(j) for j in [bottom,top]]
+    #print(bottom.shape, top.shape, left.shape, right.shape)
+    goal_boundaries = dict(left = lambda g: ut.interpolated_univariate_spline(left_verts, left, g[1]))
+    goal_boundaries.update(right = lambda g: ut.interpolated_univariate_spline(right_verts, right, g[1]))
+    goal_boundaries.update(bottom = lambda g: ut.interpolated_univariate_spline(bottom_verts, bottom, g[0]))
+    goal_boundaries.update(top = lambda g: ut.interpolated_univariate_spline(top_verts, top, g[0]))
+    corners = {(0,0): bottom.T[0], (1,0): bottom.T[-1], (0,1): top.T[0], (1,1): top.T[-1]}
+    print(corners)
+    return go, goal_boundaries, corners
 
 
 

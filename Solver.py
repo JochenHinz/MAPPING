@@ -107,25 +107,28 @@ class Solver(object):
             return -function.concatenate((vec1,vec2))
         
         
-    def Elliptic_new(self,c):
+    def Elliptic_DG(self,c):
         go = self.go
         g11, g12, g22 = self.fff(c)
         x_xi, x_eta, y_xi, y_eta = self.func_derivs(c)
         b = go.basis
         b_xi, b_eta = [b.grad(go.geom)[:,i] for i in range(2)]
         x = go.basis.vector(go.repeat).dot(c)
+        #beta = function.repeat(x[_], go.ndims, axis = 0)
         J = function.determinant(x.grad(go.geom))
-        #vec1 = go.basis.grad(go.geom)[:,0]*J*g22 - go.basis.grad(go.geom)[:,1]*J*g12
-        #vec2 = -go.basis.grad(go.geom)[:,0]*J*g12 + go.basis.grad(go.geom)[:,1]*J*g11
-        #vec1 = go.basis*(g22.grad(go.geom)[0]*J - J.grad(go.geom)[0]*g22 - g12.grad(go.geom)[1]*J + J.grad(go.geom)[1]*g12)
-        #vec2 = go.basis*(-g12.grad(go.geom)[0]*J + J.grad(go.geom)[0]*g12 + g11.grad(go.geom)[1]*J - J.grad(go.geom)[1]*g11)
         vec1 = x_xi*((b*g22).grad(go.geom)[:,0] - (b*g12).grad(go.geom)[:,1]) + x_eta*(-(b*g12).grad(go.geom)[:,0] + (b*g11).grad(go.geom)[:,1])
         vec2 = y_xi*((b*g22).grad(go.geom)[:,0] - (b*g12).grad(go.geom)[:,1]) + y_eta*(-(b*g12).grad(go.geom)[:,0] + (b*g11).grad(go.geom)[:,1])
-        #vec_d_1 = b*((x_xi*function.stack([g22,-g12]) + x_eta*function.stack([-g12,g11]))).dotnorm(go.geom)
-        #vec_d_2 = b*((y_xi*function.stack([g22,-g12]) + y_eta*function.stack([-g12,g11]))).dotnorm(go.geom)
-        vec_d_1 = b*function.jump(x_xi)
-        vec_d_2 = b*function.jump(y_xi)
-        return -function.concatenate((vec1,vec2)), 0.99*function.concatenate((vec_d_1,vec_d_2))
+        A = function.stack([(x_xi*function.stack([g22, -g12]) + x_eta*function.stack([-g12, g11])).dotnorm(go.geom), (y_xi*function.stack([g22, -g12]) + y_eta*function.stack([-g12, g11])).dotnorm(go.geom)])
+        #A = function.stack([(function.stack([x_xi*g22, x_eta*g11])).dotnorm(go.geom), (function.stack([y_xi*g22, y_eta*g11])).dotnorm(go.geom)]) ## set g_12 to 0
+        alpha = 1000000
+        vec_d_1 = b*(function.mean(A[0])) + alpha*b*function.jump(x_xi) + alpha*b*function.jump(x_eta)
+        vec_d_2 = b*(function.mean(A[1])) + alpha*b*function.jump(y_xi) + alpha*b*function.jump(y_eta)
+        #vec_d_1 -= alpha*b*function.jump((x.grad(go.geom)[:,0]).dotnorm(go.geom))
+        #vec_d_2 -= alpha*b*function.jump((x.grad(go.geom)[:,1]).dotnorm(go.geom))
+        return -function.concatenate((vec1,vec2)), function.concatenate((vec_d_1,vec_d_2))
+    
+    def Elliptic_partial_bnd_orth(self,c):
+        pass
         
         
     def Liao(self,c):
@@ -136,6 +139,12 @@ class Solver(object):
         g11, g12, g22 = self.fff(c)
         return g11*g22
     
+    def Winslow(self,c):
+        go = self.go
+        g11, g12, g22 = self.fff(c)
+        det =function.determinant(go.basis.vector(go.repeat).dot(c).grad(go.geom))
+        return (g11+g22)/det
+    
     def func_derivs(self,c):
         go = self.go
         s = go.basis.vector(2).dot(c)
@@ -143,6 +152,10 @@ class Solver(object):
         x_xi, x_eta = [x_g[i] for i in range(2)]
         y_xi, y_eta = [y_g[i] for i in range(2)]
         return x_xi, x_eta, y_xi, y_eta
+    
+    def elliptic_conformal(self,c, alpha_1 = 25, alpha_2 = 2):
+        g11, g12, g22 = self.fff(c)
+        return alpha_1*(g11- g22)**2 + alpha_2*g12**2
         
         
     def fff(self, c):  ## first fundamental form
@@ -161,16 +174,19 @@ class Solver(object):
             init = self.cons|0
         target = function.DerivativeTarget([len(go.basis.vector(2))])
         if method == 'Elliptic':
-            #x = go.basis.vector(go.repeat).dot(target)
             res = model.Integral(self.Elliptic(target), domain=go.domain, geometry=go.geom, degree=go.ischeme*3)
         elif method == 'Liao':
             res = model.Integral(self.Liao(target), domain=go.domain, geometry=go.geom, degree=go.ischeme*3).derivative(target)
         elif method == 'AO':
             res = model.Integral(self.AO(target), domain=go.domain, geometry=go.geom, degree=go.ischeme*3).derivative(target)
+        elif method == 'Winslow':
+            res = model.Integral(self.Winslow(target), domain=go.domain, geometry=go.geom, degree=go.ischeme*3).derivative(target)
+        elif method == 'Elliptic_conformal':
+            res = model.Integral(self.elliptic_conformal(target), domain=go.domain, geometry=go.geom, degree=go.ischeme*3).derivative(target)
         elif method == 'Elliptic_partial':     
             res = model.Integral(go.basis.vector(go.repeat)['ik,l']*go.geom['k,l'], domain=go.domain, geometry=go.basis.vector(go.repeat).dot(target), degree=go.ischeme*3)
-        elif method == 'Elliptic_new':
-            G, DG = self.Elliptic_new(target)
+        elif method == 'Elliptic_DG':
+            G, DG = self.Elliptic_DG(target)
             res = model.Integral(G, domain=go.domain, geometry=go.geom, degree=go.ischeme*3)
             res += model.Integral(DG, domain = go.domain.interfaces, geometry=go.geom, degree=go.ischeme*3)
         else:

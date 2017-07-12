@@ -1,0 +1,8 @@
+- Fix toscipy() for O-grids with knot-repetitions at eta = 0 (I believe I need to cut off some part of self.extend_knots()[1]) - Works, I believe
+
+- Automatize the computation of a splitting curve from 2 points and a grid:
+	using grid.toscipy compute minimum of ||point_0 - grid.toscipy[xi,0]|| and ||point_1 - grid.toscipy[xi,1]||
+	the argmins are denoted by xi_0 and xi_1. Compute splitting curve by grid.toscipy()[(1-eta)*xi_0 + eta*xi_1, eta]. - Done
+
+- Replace the coarse Point-cloud of the twin-screw by finer ones with evenly-spaced points. Preserve sharp angles.
+	

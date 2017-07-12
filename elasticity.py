@@ -14,17 +14,17 @@ def makeplots( domain, geom, stress ):
     plt.colorbar()
 
 
-def main(from_go, to_go, lmbda = 1., mu = 1., alpha = 1):
-    assert from_go.periodic == to_go.periodic
-    assert all([len(from_go.ndims) == 2, len(to_go.ndims) == 2])
+def main(from_go_, to_go_, lmbda = 1., mu = 1., alpha = 1):
+    assert from_go_.periodic == to_go_.periodic
+    assert all([len(from_go_.ndims) == 2, len(to_go_.ndims) == 2])
     
     ## prolong everything to unified grid
 
-    from_go = from_go + to_go
+    from_go = from_go_ + to_go_
     
-    to_go = to_go + from_go
+    to_go = to_go_ + from_go_
     
-    final_go = from_go + to_go
+    final_go = from_go_ + to_go_
     
     final_go.quick_plot_boundary()
     

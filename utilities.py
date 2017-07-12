@@ -9,6 +9,7 @@ import preprocessor as prep
 from scipy.linalg import block_diag
 import Solver
 import elasticity
+import reparam as rep
     
 def rotation_matrix(angle):
     return np.array([[np.cos(angle), - np.sin(angle)],[np.sin(angle), np.cos(angle)]])
@@ -125,7 +126,7 @@ class knot_object:
     
     @property
     def degree(self):
-        return self._degree    
+        return self._degree
     
     def extend_knots(self):
         knots, km = self._knots, self._knotmultiplicities
@@ -594,6 +595,7 @@ class base_grid_object(metaclass=abc.ABCMeta):   ## IMPLEMENT ABSTRACT METHODS
             
     def quick_plot(self, *args):
         points = (self.domain.refine(args[0]) if len(args) != 0 else self.domain).elem_eval(self.mapping(), ischeme='bezier5', separate=True)
+        print(points[0].shape)
         plt = plot.PyPlot('I am a dummy')
         if len(self) >= 2:
             plt.mesh(points)
@@ -1161,10 +1163,35 @@ class tensor_grid_object(base_grid_object):
         sides = [self.side, other.side]
         ## ret.s and ret.cons forthcoming
         return ret
+    
+    
+    @property
+    def toscipy(self):
+        assert len(self) == 2
+        weights = chunks(self.s, len(self.s)//self.repeat)
+        knots = self.extend_knots()
+        if len(self.periodic) == 1:  ## make weights periodic because scipy can't handle periodic kv's
+            cutoff = np.where(self.extend_knots()[1] == 1)[0][0] + self.degree[1]
+            knots[1] = knots[1][:cutoff + 1]
+            weights = [w.reshape(self.ndims) for w in weights]
+            weights = [np.hstack([w, w[:,:self.degree[1]]]).flatten() for w in weights]
+        #return lambda x,y: np.concatenate([scipy.interpolate.bisplev(x, y, [*self.extend_knots(), w, *self.degree]).T.flatten()[None,:] for w in weights], axis = 0)
+        def ret(x,y):
+            try:
+                return np.concatenate([scipy.interpolate.bisplev(x, y, [*knots, w, *self.degree])[:,:,None] for w in weights], axis = 2)
+            except:  ## input of two scalars
+                return np.concatenate([[scipy.interpolate.bisplev(x, y, [*knots, w, *self.degree])] for w in weights])[:,None]
+        return ret
+        #return lambda x,y: np.concatenate([scipy.interpolate.bisplev(x, y, [*knots, w, *self.degree])[:,:,None] for w in weights], axis = 2)
         
-        
-        
-        
+    def splitting_curve(self,c_0, c_1, steps = 1000):  
+    ## compute a separating line through the grid in the +eta-direction starting from c_0 ending at c_1
+        assert len(self) == 2, 'Not implemented yet'
+        verts = np.linspace(0,1,steps)
+        func = self.toscipy
+        xi_0 = verts[np.argmin(rep.distance(func(verts,[0]).reshape([steps,2]).T, c_0[:,None]))]
+        xi_1 = verts[np.argmin(rep.distance(func(verts,[1]).reshape([steps,2]).T, c_1[:,None]))]
+        return np.concatenate([c_0[:,None],*[func((1-eta)*xi_0 + eta*xi_1, eta) for eta in np.linspace(0,1,1000)[1:-1]], c_1[:,None]], axis = 1)    
         
     ####################################################################################   
     
@@ -1192,39 +1219,46 @@ class tensor_grid_object(base_grid_object):
         return tensor_grid_object.are_nested(self,other)
     
     
-class dummy_go(tensor_grid_object):
+class defect_go(tensor_grid_object):
     
     def __init__(self,*args, **kwargs):
         super().__init__(*args, **kwargs)
         
-    def _kv_wrapper(name):
-        def wrapper(*args, **kwargs):
-            self, *args = args
-            _kwargs = self.instantiation_lib
-            _kwargs['knots'] = getattr(self._knots, name)(*args, **kwargs)
-            new_go = dummy_go(**_kwargs)
-            new_mapping = self.prolong_weights(new_go, s = True, c = True)
-            return dummy_go.with_mapping(*new_mapping, **_kwargs)
-        return wrapper
+    def prolong_weights(self, new_go, method = 'T', s = True, c = True):  ## ugly, make prettier
+        assert_params = [tensor_grid_object.are_nested(self,new_go)] #+ [self.degree <= new_go.degree]
+        assert all(assert_params), 'the grid objects are not nested'
+        if method == 'T':  ## funcs = [vec1, vec2, ...]
+            ## make T_n, T_m, ....
+            Ts = [prolongation_matrix(*[new_go._knots[i], self._knots[i]]) for i in range(len(self._knots))]
+            if len(Ts) == 1:
+                T = Ts[0]
+            else:
+                ## make sparse for memory
+                T = sp.sparse.kron(*[sp.sparse.csr_matrix(T) for T in Ts])
+            l = self.repeat
+            ret = [sp.sparse.block_diag([T]*l).dot(self.s) if s else None, prolong_bc_go(self, new_go, *Ts) if c else None]
+            return ret
+        elif method == 'greville':
+            raise ValueError('Yet to be implemented')
+            #assert all([isinstance(func, function.Evaluable) for func in funcs])
+            #return prolong_tensor_mapping_gos(funcs, new_go.basis.vector(2), self, new_go)
+        else:
+            raise NotImplementedError
+            
+    def ref_by(self, args, prolong_mapping = True, prolong_constraint = True):  ## args = [ref_index_1, ref_index2]
+        assert len(args) == len(self.knots)
+        new_knots = self._knots.ref_by(args)  ## refine the knot_vectors
+        ## dummy go for prolong
+        new_go = defect_go(knots = new_knots, side = self._side, target_space = self._target_space)
+        ## prolong or set to None
+        new_mapping = self.prolong_weights(new_go, s = prolong_mapping, c = prolong_constraint)
+        return defect_go.with_mapping(*new_mapping, knots = new_knots, side = self._side, target_space = self._target_space)
     
-    def _prop_wrapper(name):
-        @property
-        def wrapper(self):
-            return getattr(self._knots, name)
-        return wrapper
+    #def nutils_ref(self,n):
+    #    self.domain = self.domain.refine(n)
+    #    self.basis
+        
     
-    def extend_knots(self):
-        return self._knots.extend_knots()
-    knots = _prop_wrapper('knots')
-    periodic = _prop_wrapper('periodic')
-    ndims = _prop_wrapper('ndims')
-    knotmultiplicities = _prop_wrapper('knotmultiplicities')
-    ref_by = _kv_wrapper('ref_by')
-    add_knots = _kv_wrapper('add_knots')
-    raise_multiplicities = _kv_wrapper('raise_multiplicities')
-    
-    del _kv_wrapper
-    del _prop_wrapper
 
 
 def make_go(grid_type, *args, **kwargs):
@@ -1399,7 +1433,7 @@ def jac_go(go,ref = 0):  ## make a B-spline basis of order 2p - 1 with p + 1 int
     km = [[p[i] + 1 if i in periodic else 2*p[i]] + [p[i] + 1]*(len(knots[i]) - 2) + [p[i] + 1 if i in periodic else 2*p[i]] for i in range(len(knots))]
     #knots_jac = [list(itertools.chain.from_iterable([[knots[i][j]]*km[i][j] for j in range(len(km[i]))])) for i in range(len(km))] # make the knot_vector with repeated knots
     _knots = np.prod([nonuniform_kv(_p[i], knotvalues = go._knots[i].knots, periodic = go._knots[i].periodic, knotmultiplicities = km[i]) for i in range(len(km))])
-    return tensor_grid_object(knots = _knots, target_space = 1)
+    return defect_go(knots = _knots, target_space = 1)
 
 
 def collocate_greville(go, func, onto, onto_p, onto_knots = None, ref = 0, ret_domain = False):  # collocate func onto onto. the grid_object must have verts specified for the greville abscissae

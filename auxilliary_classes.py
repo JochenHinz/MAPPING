@@ -130,6 +130,33 @@ def prolongation_matrix(*args):  ## MAKE THIS SPARSE
     ## return T if kv_new >= kv_old else the restriction
     return T if not assert_params[0] else np.linalg.inv(T.T.dot(T)).dot(T.T)
 
+def _prolongation_matrix(*args):  ## A bit more efficient but doesn't always work
+    assert_params = [args[0] <= args[1], args[1] <= args[0]]
+    assert any(assert_params) and args[0]._degree == args[1]._degree, 'The kvs must be nested'  ## check for nestedness
+    if all(assert_params):
+        return np.eye(args[0].dim)
+    p = args[0]._degree
+    kv_new, kv_old = [k.extend_knots() for k in args] ## repeat first and last knots
+    if assert_params[0]:  ## kv_new <= kv_old, reverse order 
+        kv_new, kv_old = list(reversed([kv_new, kv_old]))
+    n = len(kv_new) - 1
+    m = len(kv_old) - 1
+    T = numpy.zeros([n, m])
+    for i in range(T.shape[0]):
+        for j in range(T.shape[1]):
+            if kv_new[i] >= kv_old[j] and kv_new[i] < kv_old[j+1]:
+                T[i,j] = 1
+    for q in range(p):
+        q = q+1
+        fac1 = np.array([[(kv_new[i + q] - kv_old[j])/(kv_old[j+q] - kv_old[j]) if kv_old[j+q] != kv_old[j] else 0 for j in range(m-q)] for i in range(n-q)])
+        fac2 = np.array([[(kv_old[j + 1 + q] - kv_new[i + q])/(kv_old[j + q + 1] - kv_old[j + 1]) if kv_old[j + q + 1] != kv_old[j + 1] else 0 for j in range(m-q)] for i in range(n-q)])
+        T = T[:-1,:][:,:-1]*fac1 + T[:-1,1:]*fac2
+    if args[0].periodic:  ## some additional tweaking in the periodic case
+        T_ = T
+        T = T[:n-2*p,:m-2*p]
+        T[:,0:p] += T_[:n-2*p,m-2*p: m-2*p+p]
+    return T if not assert_params[0] else np.linalg.inv(T.T.dot(T)).dot(T.T)
+
 ### go.cons prolongation / restriction
 
 def prolong_bc_go(fromgo, togo, *args, return_type = 'nan'):  ## args = [T_n, T_m , ...]
@@ -152,3 +179,7 @@ def prolong_bc_go(fromgo, togo, *args, return_type = 'nan'):  ## args = [T_n, T_
         return ret
     else:
         raise NotImplementedError
+        
+def chunks(l, n):
+    """Yield successive n-sized chunks from l."""
+    return [l[i:i + n] for i in range(0, len(l), n)]

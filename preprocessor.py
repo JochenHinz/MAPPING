@@ -115,7 +115,7 @@ def constrained_boundary_projection(go, goal_boundaries_, corners, btol = 1e-2, 
                 elem.transform.promote(domain.ndims)[0]
                 for elem in go_.domain.supp(basis_, numpy.where(error_ > btol)[0]))
         elif basis_type == 'bspline':  ## basis is b_spline just compute error per element, refinement comes later
-            basis0 = go_.domain.basis_bspline(degree = 0, periodic = ())
+            basis0 = go_.domain.basis_bspline(degree = 0, periodic = tuple(go.periodic))
             error_ = np.divide(*go_.integrate([basis0*error, basis0]))
             print(numpy.max(error_), side)
             error_dict[side] = error_
@@ -131,6 +131,7 @@ def constrained_boundary_projection(go, goal_boundaries_, corners, btol = 1e-2, 
         union_dict = {0: ['bottom', 'top'], 1: ['left', 'right']}
         ## take union of refinement indices
         ref_indices = [vec_union(*[numpy.where(error_dict[i] > btol)[0] for i in union_dict[j]]) for j in range(2)]
+        print(ref_indices)
         if len(ref_indices[0]) == 0 and len(ref_indices[1]) == 0:  ## no refinement
             return None
         else: ## return refined go
